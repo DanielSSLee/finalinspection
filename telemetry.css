@@ -1,0 +1,966 @@
+/* ==========================================================================
+   FVI Station 01 — Secondary Monitor Metrology & Telemetry Display
+   Screen 2: Sun Simulator, Hi-Pot Safety Analyzer, and Pipeline Console
+   Matches exact industrial styling from reference image
+   ========================================================================== */
+
+:root {
+  --bg-deep: #090e18;
+  --bg-card: #0f1726;
+  --bg-surface: #141f33;
+  --bg-input: #1a273f;
+  --bg-hover: #1e2d48;
+  
+  --border-subtle: #1c293d;
+  --border-muted: #263852;
+  --border-bright: #3b5072;
+
+  --text-bright: #ffffff;
+  --text-main: #d1d8e2;
+  --text-muted: #8292a8;
+  --text-dim: #54647a;
+
+  --accent-blue: #0284c7;
+  --accent-cyan: #38bdf8;
+  --accent-cyan-glow: rgba(56, 189, 248, 0.25);
+  --accent-amber: #f59e0b;
+  --accent-gold: #fbbf24;
+  --accent-emerald: #10b981;
+  --accent-emerald-glow: rgba(16, 185, 129, 0.25);
+  --accent-rose: #f43f5e;
+
+  --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-display: 'Outfit', 'Inter', sans-serif;
+
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 7px;
+  --radius-lg: 10px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-deep);
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.4;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+  user-select: none;
+}
+
+/* --------------------------------------------------------------------------
+   Top Navigation Header
+   -------------------------------------------------------------------------- */
+.telemetry-header {
+  background-color: var(--bg-card);
+  border-bottom: 1px solid var(--border-subtle);
+  height: 52px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-shrink: 0;
+}
+
+.brand-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-badge {
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.15), rgba(16, 185, 129, 0.15));
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  color: var(--accent-cyan);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: var(--radius-xs);
+  letter-spacing: 0.05em;
+}
+
+.brand-title {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-bright);
+  letter-spacing: 0.03em;
+}
+
+.brand-subtitle {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+/* Center Module Readout */
+.module-sync-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.module-id-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-sm);
+  padding: 4px 12px;
+}
+
+.module-label {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+
+.module-val {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  letter-spacing: 0.04em;
+}
+
+/* Status Pills */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.status-indicator-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 9999px;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+.status-indicator-pill.live {
+  background-color: rgba(16, 185, 129, 0.12);
+  color: var(--accent-emerald);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.status-indicator-pill.fallback {
+  background-color: rgba(56, 189, 248, 0.1);
+  color: var(--accent-cyan);
+  border-color: rgba(56, 189, 248, 0.25);
+}
+
+.status-pip {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: currentColor;
+}
+
+.status-indicator-pill.live .status-pip {
+  box-shadow: 0 0 6px currentColor;
+  animation: pulse-pip 2s infinite ease-in-out;
+}
+
+@keyframes pulse-pip {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.85); }
+}
+
+.btn-screen-action {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-muted);
+  color: var(--text-main);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-screen-action:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-bright);
+  border-color: var(--border-bright);
+}
+
+/* --------------------------------------------------------------------------
+   Main Viewport
+   -------------------------------------------------------------------------- */
+.telemetry-viewport {
+  flex: 1;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+/* --------------------------------------------------------------------------
+   1. Top 5-Station Manufacturing Pipeline Bar
+   -------------------------------------------------------------------------- */
+.pipeline-bar {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+  width: 100%;
+}
+
+.pipeline-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 0.2s ease;
+}
+
+.pipeline-card:hover {
+  border-color: var(--border-muted);
+}
+
+.pipeline-card.active-station {
+  border-color: rgba(56, 189, 248, 0.4);
+  background: linear-gradient(180deg, rgba(56, 189, 248, 0.05), var(--bg-card));
+}
+
+.pipe-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.pipe-name {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.badge-status {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.badge-status.pass {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: var(--accent-emerald);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.badge-status.bin {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: var(--accent-emerald);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.badge-status.live {
+  background-color: rgba(56, 189, 248, 0.15);
+  color: var(--accent-cyan);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+}
+
+.pipe-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pipe-datetime {
+  display: flex;
+  flex-direction: column;
+}
+
+.pipe-date {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-bright);
+}
+
+.pipe-time {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-bright);
+}
+
+.pipe-grade-circle {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background-color: var(--accent-emerald);
+  color: #0b111e;
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.4);
+}
+
+.pipe-live-pulse {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: var(--accent-cyan);
+  box-shadow: 0 0 8px var(--accent-cyan);
+  animation: pulse-pip 1.5s infinite;
+}
+
+/* --------------------------------------------------------------------------
+   2. Expanded Two-Column Main Layout
+   -------------------------------------------------------------------------- */
+.telemetry-main-grid {
+  display: grid;
+  grid-template-columns: 46% 54%;
+  gap: 12px;
+  align-items: start;
+}
+
+/* --------------------------------------------------------------------------
+   LEFT COLUMN: SunSim KPI Grid, Hi-Pot Analyzer, Station Attributes Table
+   -------------------------------------------------------------------------- */
+.col-metrology-left {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Sun Simulator Flasher Metrology Grid (4 columns, matches reference image) */
+.sunsim-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.kpi-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 72px;
+  transition: border-color 0.15s ease;
+}
+
+.kpi-card:hover {
+  border-color: var(--border-muted);
+}
+
+/* Card 1: Pmax & Bin spans 2 columns */
+.kpi-card.kpi-pmax-bin {
+  grid-column: span 2;
+}
+
+/* Card 9: Inspection Time spans 2 columns */
+.kpi-card.kpi-inspection-time {
+  grid-column: span 2;
+}
+
+.kpi-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.kpi-val-row {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.kpi-val {
+  font-family: var(--font-sans);
+  font-size: 1.45rem;
+  font-weight: 800;
+  color: var(--text-bright);
+  letter-spacing: -0.02em;
+}
+
+.kpi-val.pmax-accent {
+  color: #ffffff;
+}
+
+.kpi-val.time-mono {
+  font-family: var(--font-mono);
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-bright);
+}
+
+.kpi-unit {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.kpi-sub-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+}
+
+.module-spec-code {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--accent-cyan);
+}
+
+.bin-badge {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  background-color: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  padding: 2px 7px;
+  border-radius: var(--radius-xs);
+}
+
+/* --------------------------------------------------------------------------
+   Hi-Pot / Safety Analyzer Section
+   -------------------------------------------------------------------------- */
+.hipot-analyzer-section {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.hipot-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.hipot-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hipot-shield-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--accent-emerald);
+}
+
+.hipot-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-bright);
+  letter-spacing: 0.02em;
+}
+
+.hipot-master-badge {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: var(--accent-emerald);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: var(--radius-xs);
+  letter-spacing: 0.03em;
+}
+
+.hipot-subcards-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.hipot-subcard {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.subcard-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.subcard-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.subcard-badge {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+.subcard-badge.pass {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: var(--accent-emerald);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.subcard-metric {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.metric-num {
+  font-family: var(--font-sans);
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--text-bright);
+}
+
+.metric-unit {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.subcard-desc {
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --------------------------------------------------------------------------
+   All Station Attributes & Raw Telemetry
+   -------------------------------------------------------------------------- */
+.attributes-section {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.attributes-header {
+  padding: 9px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  background-color: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  transition: background-color 0.15s ease;
+}
+
+.attributes-header:hover {
+  background-color: var(--bg-hover);
+}
+
+.attributes-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chevron-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+}
+
+.chevron-icon.collapsed {
+  transform: rotate(-90deg);
+}
+
+.list-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--accent-cyan);
+}
+
+.attributes-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-main);
+  letter-spacing: 0.02em;
+}
+
+.table-count-badge {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--text-muted);
+}
+
+.attributes-table-wrap {
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.attributes-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.attributes-table tr {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.attributes-table tr:last-child {
+  border-bottom: none;
+}
+
+.attributes-table tr:hover {
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+.attr-key {
+  padding: 7px 12px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-weight: 500;
+  width: 44%;
+}
+
+.attr-val {
+  padding: 7px 12px;
+  font-size: 0.75rem;
+  color: var(--text-bright);
+}
+
+.attr-val.mono {
+  font-family: var(--font-mono);
+}
+
+.attr-val.font-bold {
+  font-weight: 700;
+}
+
+.attr-val.pass-highlight {
+  color: var(--accent-emerald);
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+
+/* --------------------------------------------------------------------------
+   RIGHT COLUMN: Dual-Axis Chart & Run Chart Deck
+   -------------------------------------------------------------------------- */
+.col-metrology-right {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Dual-Axis I-V & P-V Curve Chart Card */
+.chart-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chart-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chart-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chart-icon {
+  width: 15px;
+  height: 15px;
+  color: var(--accent-cyan);
+}
+
+.chart-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-bright);
+  letter-spacing: 0.02em;
+}
+
+.chart-legend-group {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.legend-dot.iv {
+  background-color: var(--accent-cyan);
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.6);
+}
+
+.legend-dot.pv {
+  background-color: var(--accent-amber);
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+}
+
+.chart-viewport-wrap {
+  position: relative;
+  width: 100%;
+  height: 380px;
+  background-color: #0b111e;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.chart-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.chart-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background-color: rgba(15, 23, 42, 0.95);
+  border: 1px solid var(--border-bright);
+  border-radius: var(--radius-xs);
+  padding: 6px 10px;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-bright);
+  display: none;
+  z-index: 10;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+/* --------------------------------------------------------------------------
+   Historical Run Chart & Power Bin Deck (Option 1 Expanded Telemetry)
+   -------------------------------------------------------------------------- */
+.run-chart-deck {
+  display: grid;
+  grid-template-columns: 55% 45%;
+  gap: 10px;
+}
+
+.mini-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mini-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mini-card-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-bright);
+}
+
+.target-spec-label, .total-tested-label {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
+
+.run-chart-svg-wrap {
+  width: 100%;
+  height: 110px;
+  background-color: #0b111e;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+}
+
+.run-chart-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.bin-dist-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bin-progress-stacked {
+  height: 14px;
+  border-radius: var(--radius-xs);
+  background-color: var(--bg-surface);
+  display: flex;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+}
+
+.bin-seg {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+.bin-legend-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.bin-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  padding: 3px 6px;
+  font-size: 0.68rem;
+}
+
+.pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.pill-name {
+  font-weight: 700;
+  color: var(--text-bright);
+}
+
+.pill-pct {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+/* --------------------------------------------------------------------------
+   Global Footer
+   -------------------------------------------------------------------------- */
+.telemetry-footer {
+  background-color: var(--bg-card);
+  border-top: 1px solid var(--border-subtle);
+  height: 36px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.footer-correlation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.correlation-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--accent-emerald);
+}
+
+.footer-timestamp {
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
+
+/* --------------------------------------------------------------------------
+   Responsive Layout & Scaling
+   -------------------------------------------------------------------------- */
+@media (max-width: 1300px) {
+  .telemetry-main-grid {
+    grid-template-columns: 1fr;
+  }
+  .chart-viewport-wrap {
+    height: 320px;
+  }
+}
+
+@media (max-width: 900px) {
+  .pipeline-bar {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .sunsim-kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .kpi-card.kpi-pmax-bin, .kpi-card.kpi-inspection-time {
+    grid-column: span 2;
+  }
+  .run-chart-deck {
+    grid-template-columns: 1fr;
+  }
+}

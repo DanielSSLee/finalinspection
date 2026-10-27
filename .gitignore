@@ -1,0 +1,43 @@
+# ==============================================================================
+# Git Ignore Configuration for FVI Station 01
+# Protect sensitive files, local databases, and temporary caches
+# ==============================================================================
+
+# Environment & Secret files (NEVER COMMIT)
+.env
+.env.local
+.env.*.local
+*.env
+
+# SQLite Production Database & Cached Images
+*.db
+*.sqlite
+*.sqlite3
+fvi_production.db
+el_cache/
+
+# Python compiled bytecode & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+
+# Build & Distribution
+dist/
+build/
+*.egg-info/
+
+# Operating System & IDE Files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace

@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  fvi-edge-server:
+    build: .
+    container_name: fvi_inspection_server
+    restart: always
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      - TZ=America/Chicago
+    volumes:
+      # Persist local SQLite fallback DB and EL camera image cache
+      - fvi_db_data:/app
+      - ./el_cache:/app/el_cache
+    # extra_hosts:
+    #   # Optional: map custom hostnames to plant server IPs if DNS is not available
+    #   - "cmms-auth:${CMMS_HOST:-localhost}"
+    #   - "mes-mqtt:${MQTT_BROKER:-localhost}"
+
+volumes:
+  fvi_db_data:

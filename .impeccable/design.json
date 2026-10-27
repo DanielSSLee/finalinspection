@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-20T20:50:00Z",
+  "title": "Design System: FVI Inspection Station",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Instrument Blue",
+        "canonical": "#0369a1",
+        "tonalRamp": ["#082f49", "#0c4a6e", "#075985", "#0369a1", "#0284c7", "#38bdf8", "#7dd3fc", "#93c5fd", "#bae6fd"]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Matte Carbon Canvas",
+        "canonical": "#090b0e",
+        "tonalRamp": ["#050608", "#090b0e", "#11141a", "#151820", "#1c222c", "#272f3e", "#384358"]
+      },
+      "statusA": {
+        "role": "accent",
+        "displayName": "Grade A Pass",
+        "canonical": "#10b981",
+        "tonalRamp": ["#064e3b", "#059669", "#10b981", "#34d399", "#a7f3d0"]
+      },
+      "statusB": {
+        "role": "accent",
+        "displayName": "Grade B Secondary",
+        "canonical": "#f59e0b",
+        "tonalRamp": ["#78350f", "#d97706", "#f59e0b", "#fbbf24", "#fde68a"]
+      },
+      "statusX": {
+        "role": "accent",
+        "displayName": "Grade X Reject",
+        "canonical": "#ef4444",
+        "tonalRamp": ["#7f1d1d", "#dc2626", "#ef4444", "#f87171", "#fca5a5"]
+      },
+      "statusC": {
+        "role": "accent",
+        "displayName": "Severe Shunt",
+        "canonical": "#f97316",
+        "tonalRamp": ["#7c2d12", "#c2410c", "#f97316", "#fb923c", "#fed7aa"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Station branding, grade toggles, section titles" },
+      "body": { "displayName": "Body", "purpose": "Operator details and defect descriptions" },
+      "label": { "displayName": "Label", "purpose": "Cell coordinates and defect code badges" }
+    },
+    "shadows": [
+      { "name": "hairline-stroke", "value": "0 0 0 1px #1c222c", "purpose": "Instrument panel separation" }
+    ],
+    "motion": [
+      { "name": "ease-expo-out", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Standard deceleration for smooth feedback" }
+    ],
+    "breakpoints": [
+      { "name": "xl", "value": "1440px" },
+      { "name": "lg", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Save Inspection Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Commit inspection to database",
+      "html": "<button class=\"console-btn primary\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" width=\"14\" height=\"14\"><path d=\"M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z\"></path><polyline points=\"17 21 17 13 7 13 7 21\"></polyline><polyline points=\"7 3 7 8 15 8\"></polyline></svg><span>Commit Log</span></button>",
+      "css": ".console-btn.primary { display: inline-flex; align-items: center; gap: 6px; background: #0369a1; border: 1px solid #0369a1; color: #f8fafc; padding: 6px 14px; border-radius: 4px; font-weight: 600; font-size: 13px; cursor: pointer; transition: all 0.12s ease-out; } .console-btn.primary:hover { background: #075985; border-color: #075985; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Cleanroom Instrument",
+    "overview": "This workstation operates as a high-precision manufacturing instrument for cleanroom and testing bay environments. It prioritizes zero-latency optical evaluation of solar modules under electroluminescence (EL) cameras.",
+    "keyCharacteristics": [
+      "Matte Carbon Canvas",
+      "Engineered Typography (Barlow Semi Condensed & Barlow)",
+      "Micro-Matrix Precision (24x6)",
+      "Docked Inline Cell Inspector",
+      "Tonal Status Signaling"
+    ]
+  }
+}

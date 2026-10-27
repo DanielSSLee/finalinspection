@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FVI Station 01 — Photovoltaic Final Visual Inspection Console</title>
+  <meta name="description"
+    content="Industrial workstation console for Electroluminescence (EL) defect mapping, CMMS operator tracking, and conveyor MQTT synchronization">
+  <!-- Clean engineered Google Fonts: Barlow Semi Condensed, Barlow & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:ital,wght@0,500;0,600;0,700;0,800;1,600&family=Barlow:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preload" as="image" href="solar_el_sample.jpg">
+</head>
+
+<body class="theme-industrial">
+  <div class="workbench-shell">
+
+    <!-- Top Console Control Rail -->
+    <header class="console-header">
+      <div class="header-segment station-identity">
+        <div class="brand-glyph" aria-hidden="true" title="FVI Console">
+          <svg viewBox="0 0 20 20" fill="none" width="18" height="18">
+            <rect x="2" y="2" width="16" height="16" rx="2" stroke="currentColor" stroke-width="1.5" />
+            <line x1="2" y1="10" x2="18" y2="10" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2 2" />
+            <line x1="10" y1="2" x2="10" y2="18" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2 2" />
+          </svg>
+        </div>
+        <h1 class="sr-only station-title">FVI-01 Final Visual Inspection Console</h1>
+      </div>
+
+      <!-- Real-Time Hardware & DB Integration Status Pills -->
+      <div class="header-segment status-pills-group" id="header-status-group">
+        <div class="status-indicator-pill status-live" id="pill-db-status"
+          title="Database Connection: Immediate sync active">
+          <span class="status-pip"></span>
+          <span>DB LIVE</span>
+        </div>
+        <div class="status-indicator-pill status-live" id="pill-mqtt-status"
+          title="Conveyor MQTT Sensor: Listening for panel arrivals">
+          <span class="status-pip"></span>
+          <span>MQTT</span>
+        </div>
+        <button type="button" class="status-indicator-pill btn-pill-action" id="pill-sim-trigger"
+          title="Hardware & Conveyor Simulator">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path
+              d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+            </path>
+          </svg>
+          <span>Hardware</span>
+        </button>
+      </div>
+
+      <!-- Module Scanner & Authenticated CMMS Inspector Badge -->
+      <div class="header-segment module-scanner">
+        <div class="scanner-field" title="Photovoltaic Module Serial Number (Auto-populated by Conveyor MQTT)">
+          <svg class="scanner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="4" width="20" height="16" rx="1"></rect>
+            <path d="M6 8h3M6 12h2M6 16h4M13 8h5M13 12h2M13 16h5"></path>
+          </svg>
+          <input type="text" id="module-id-input" value="USM0112208260078" maxlength="16" spellcheck="false"
+            autocomplete="off" placeholder="e.g. USM0112208260078">
+        </div>
+
+        <!-- Operator CMMS Profile Badge Button -->
+        <button type="button" class="operator-profile-btn" id="btn-operator-profile"
+          title="CMMS Authenticated Inspector — Click to switch user or sign out">
+          <svg class="operator-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path>
+            <circle cx="12" cy="7" r="4"></circle>
+          </svg>
+          <div class="operator-profile-info">
+            <span class="operator-profile-name" id="display-operator-name">Sign In</span>
+          </div>
+        </button>
+        <input type="hidden" id="operator-input" value="">
+      </div>
+
+      <!-- Center: Industrial Segmented Grade Selector -->
+      <div class="header-segment grade-segment">
+        <div class="segmented-grade-control" id="segmented-grade-control" role="radiogroup"
+          aria-label="Module Grade Selection">
+          <button type="button" class="grade-toggle grade-a" data-grade="A" role="radio" aria-checked="false"
+            id="btn-grade-a">
+            <span class="grade-code">A</span>
+            <span class="grade-text">PRIME</span>
+          </button>
+          <button type="button" class="grade-toggle grade-b" data-grade="B" role="radio" aria-checked="false"
+            id="btn-grade-b">
+            <span class="grade-code">B</span>
+            <span class="grade-text">SECONDARY</span>
+          </button>
+          <button type="button" class="grade-toggle grade-x" data-grade="X" role="radio" aria-checked="false"
+            id="btn-grade-x">
+            <span class="grade-code">X</span>
+            <span class="grade-text">REJECT</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Right: Actions -->
+      <div class="header-segment action-segment">
+        <button type="button" id="btn-view-sql" class="console-btn secondary" title="View backend database statements"
+          style="display: none;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+            <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+            <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+          </svg>
+          <span>SQL Ready</span>
+        </button>
+
+        <button type="button" id="btn-launch-telemetry" class="console-btn secondary"
+          title="Open Monitor 2 Metrology Display (Sun Simulator & Hi-Pot)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+            <line x1="8" y1="21" x2="16" y2="21"></line>
+            <line x1="12" y1="17" x2="12" y2="21"></line>
+          </svg>
+          <span>Monitor 2 Display ↗</span>
+        </button>
+
+        <button type="button" id="btn-save-inspection" class="console-btn primary"
+          title="Submit module grade to database">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+            <polyline points="7 3 7 8 15 8"></polyline>
+          </svg>
+          <span>Submit Grade</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Workspace: Asymmetric Left Dock & Right Stage -->
+    <main class="console-workspace">
+
+      <!-- Left Dock: Clean, uncluttered Defect History & Telemetry -->
+      <aside class="sidebar-dock">
+
+        <!-- Telemetry Summary Bar -->
+        <div class="dock-block telemetry-block">
+          <div class="telemetry-cell">
+            <span class="telemetry-key">Module</span>
+            <span class="telemetry-val text-mono" id="summary-module-id">USM-2026-FVI-849</span>
+          </div>
+          <div class="telemetry-cell">
+            <span class="telemetry-key">Grade</span>
+            <span class="telemetry-badge grade-tag-pending" id="summary-grade-badge">Pending Selection</span>
+          </div>
+          <div class="telemetry-cell">
+            <span class="telemetry-key">Defects</span>
+            <span class="telemetry-val text-mono highlight" id="stat-defect-count">0</span>
+          </div>
+          <span style="display: none;" id="summary-total-tags">0 cells tagged</span>
+        </div>
+
+        <!-- Defect History Log Table (Primary focus of left dock) -->
+        <div class="dock-block history-block">
+          <div class="block-header">
+            <div class="header-left-title">
+              <h2 class="block-title">LOGGED DEFECTS</h2>
+              <span class="count-badge" id="history-badge-count">0</span>
+            </div>
+            <button type="button" id="btn-clear-history" class="btn-text-action" title="Clear all tagged defects">Clear
+              All</button>
+          </div>
+
+          <div class="history-table-wrapper">
+            <table class="history-table" id="history-table">
+              <thead>
+                <tr>
+                  <th style="width: 50px;">CELL</th>
+                  <th style="width: 48px;">CODE</th>
+                  <th>DEFECT CLASSIFICATION</th>
+                  <th style="width: 38px;">GRD</th>
+                  <th style="width: 32px; text-align: right;">DEL</th>
+                </tr>
+              </thead>
+              <tbody id="history-tbody">
+                <!-- Dynamic defect rows injected by JS -->
+              </tbody>
+            </table>
+
+            <!-- Empty State -->
+            <div class="empty-history" id="empty-history-state">
+              <p class="empty-title">Ready for inspection</p>
+              <p class="empty-subtitle">Click any cell on the 24&times;6 EL matrix to open the defect bubble and log
+                defects to the database.</p>
+            </div>
+          </div>
+
+          <!-- Whiteboard Syntax Strip -->
+          <div class="whiteboard-strip">
+            <span class="strip-label">WHITEBOARD SYNTAX:</span>
+            <span class="strip-code text-mono" id="whiteboard-notation-preview">(None)</span>
+          </div>
+        </div>
+
+      </aside>
+
+      <!-- Right Inspection Stage: Calibrated EL Camera Viewport -->
+      <section class="stage-section">
+
+        <!-- Stage Toolbar -->
+        <div class="stage-toolbar">
+          <div class="toolbar-title-group">
+            <span class="stage-status-indicator"></span>
+            <span class="telemetry-pill" id="live-coord-indicator">Hover image to view grid</span>
+          </div>
+
+          <div class="toolbar-tool-group">
+            <!-- Grid lock toggle -->
+            <label class="switch-control" title="Lock coordinate grid always visible">
+              <input type="checkbox" id="toggle-keep-grid">
+              <span class="switch-track"></span>
+              <span class="switch-label">Grid Lock</span>
+            </label>
+
+            <!-- Invert Filter -->
+            <button type="button" class="console-btn-tool" id="btn-toggle-invert"
+              title="Invert EL image (enhances hairline micro-cracks)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M12 2a10 10 0 0 1 0 20z" fill="currentColor"></path>
+              </svg>
+              <span>Invert</span>
+            </button>
+
+            <!-- Reset Fit -->
+            <button type="button" class="console-btn-tool" id="btn-reset-zoom" title="Reset Camera View Fit">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"></path>
+              </svg>
+              <span>Fit</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Camera Stage with Top Axis, Left Axis, and Exact Calibrated Grid -->
+        <div class="inspection-frame" id="inspection-frame">
+
+          <!-- Top X-Axis Header (Columns 1–24) -->
+          <div class="axis-header-x" id="axis-header-x">
+            <!-- Columns 1 to 24 generated via JS -->
+          </div>
+
+          <!-- Axis Y & Interactive Canvas -->
+          <div class="axis-and-image-container">
+            <!-- Left Y-Axis Header (Rows A–F) -->
+            <div class="axis-header-y" id="axis-header-y">
+              <!-- Rows A to F generated via JS -->
+            </div>
+
+            <!-- Calibrated Stage -->
+            <div class="image-stage" id="image-stage">
+              <img src="solar_el_sample.jpg" alt="Photovoltaic Solar Module Electroluminescence Test" id="el-image"
+                class="el-display-img" draggable="false">
+
+              <!-- Precision Optical Reticle Lines (Active Crosshairs) -->
+              <div class="reticle-line-h" id="reticle-line-h"></div>
+              <div class="reticle-line-v" id="reticle-line-v"></div>
+
+              <!-- Calibrated 24x6 Coordinate Matrix (0 to 544px / 97.49% height) -->
+              <div class="coordinate-grid-overlay" id="coordinate-grid-overlay">
+                <!-- 144 interactive cells injected by JS -->
+              </div>
+
+              <!-- Persistent Defect Pins Layer -->
+              <div class="defect-pins-layer" id="defect-pins-layer">
+                <!-- Defect markers injected by JS -->
+              </div>
+
+              <!-- Contextual Comic Speech Bubble Popover (Appears on the side of clicked cell) -->
+              <div class="cell-comic-bubble arrow-left" id="cell-comic-bubble" style="display: none;" role="dialog"
+                aria-modal="true" aria-label="Cell Defect Selection">
+                <div class="bubble-arrow" id="bubble-arrow"></div>
+
+                <div class="bubble-header">
+                  <div class="bubble-title-group">
+                    <span class="bubble-cell-badge" id="bubble-cell-coord">CELL C-08</span>
+                    <span class="bubble-hint">Select reason:</span>
+                  </div>
+                  <button type="button" class="bubble-close-btn" id="btn-bubble-close"
+                    aria-label="Close bubble">&times;</button>
+                </div>
+
+                <div class="bubble-body">
+                  <!-- 8 Defect Reasons List -->
+                  <div class="bubble-reasons-list" id="bubble-reasons-list">
+                    <button type="button" class="bubble-reason-item" data-code="A1">
+                      <span class="reason-code code-a">A1</span>
+                      <span class="reason-label">Micro-Crack (Hairline)</span>
+                    </button>
+                    <button type="button" class="bubble-reason-item" data-code="A2">
+                      <span class="reason-code code-a">A2</span>
+                      <span class="reason-label">Cross Crack / Star Crack</span>
+                    </button>
+                    <button type="button" class="bubble-reason-item" data-code="B1">
+                      <span class="reason-code code-b">B1</span>
+                      <span class="reason-label">Dead Finger / Inactive Area</span>
+                    </button>
+                    <button type="button" class="bubble-reason-item" data-code="B2">
+                      <span class="reason-code code-b">B2</span>
+                      <span class="reason-label">Solder Disconnect / Void</span>
+                    </button>
+                    <button type="button" class="bubble-reason-item" data-code="C1">
+                      <span class="reason-code code-c">C1</span>
+                      <span class="reason-label">Dark Cell / Low Shunt</span>
+                    </button>
+                    <button type="button" class="bubble-reason-item" data-code="X1">
+                      <span class="reason-code code-x">X1</span>
+                      <span class="reason-label">Broken Cell / Corner V-Crack</span>
+                    </button>
+                    <button type="button" class="bubble-reason-item" data-code="X2">
+                      <span class="reason-code code-x">X2</span>
+                      <span class="reason-label">Severe Hotspot / Solder Bead</span>
+                    </button>
+                    <button type="button" class="bubble-reason-item" data-code="X3">
+                      <span class="reason-code code-x">X3</span>
+                      <span class="reason-label">Delamination / Foreign Mat.</span>
+                    </button>
+                  </div>
+
+                  <!-- Optional Notes Input -->
+                  <div class="bubble-notes-wrap">
+                    <input type="text" id="bubble-notes-input" class="bubble-notes-field"
+                      placeholder="Optional notes (e.g. junction flaw)..." autocomplete="off">
+                  </div>
+                </div>
+
+                <!-- Footer with Delete and Lit Confirm Button -->
+                <div class="bubble-footer">
+                  <button type="button" class="bubble-btn-delete" id="btn-bubble-delete"
+                    style="display: none;">Remove</button>
+                  <button type="button" class="bubble-btn-confirm" id="btn-bubble-confirm" disabled>
+                    <span>Confirm</span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14"
+                      height="14">
+                      <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Precision Floating Cursor Tooltip -->
+              <div class="hover-tooltip" id="hover-tooltip">
+                <span class="tooltip-coord">A-1</span>
+                <span class="tooltip-status">Click to inspect</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom Mirror X-Axis (Columns 1–24) -->
+          <div class="axis-footer-x" id="axis-footer-x">
+            <!-- Mirror 1 to 24 bottom labels -->
+          </div>
+        </div>
+
+        <!-- Stage Footer Console Readout & Hotkeys -->
+        <footer class="stage-footer">
+          <div class="footer-segment">
+            <span class="telemetry-metric" id="cursor-pos-readout">Cursor: Ready</span>
+          </div>
+          <div class="footer-segment hotkeys-bar">
+            <span class="hotkey-item"><kbd>A</kbd><kbd>B</kbd><kbd>X</kbd> Grade</span>
+            <span class="hotkey-item"><kbd>1</kbd>–<kbd>8</kbd> Quick Pick</span>
+            <span class="hotkey-item"><kbd>Enter</kbd> Confirm &amp; Save DB</span>
+            <span class="hotkey-item"><kbd>I</kbd> Invert</span>
+            <span class="hotkey-item"><kbd>G</kbd> Grid Lock</span>
+            <span class="hotkey-item"><kbd>Esc</kbd> Close</span>
+          </div>
+        </footer>
+
+      </section>
+
+    </main>
+
+    <!-- CMMS Operator Authentication Modal -->
+    <!-- CMMS Operator Authentication Modal -->
+    <div class="modal-backdrop" id="login-modal" role="dialog" aria-modal="true" aria-labelledby="login-dialog-title">
+      <div class="modal-dialog modal-md">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <span class="modal-cell-badge badge-cmms">CMMS AUTH</span>
+            <h3 id="login-dialog-title">Inspector Login — Plant CMMS Gateway</h3>
+          </div>
+          <button type="button" class="btn-close-modal" id="btn-close-login-modal"
+            aria-label="Close Login">&times;</button>
+        </div>
+        <div class="modal-body">
+
+          <!-- State A: Login Form (Visible when signed out) -->
+          <div id="cmms-login-form-view">
+            <p class="login-prompt-desc">Sign in with your plant CMMS credentials.</p>
+
+            <form id="cmms-login-form" autocomplete="off">
+              <div class="login-field-group">
+                <label for="login-username" class="login-label">CMMS Username</label>
+                <div class="login-input-wrap">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                    <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+                    <line x1="7" y1="8" x2="17" y2="8"></line>
+                    <line x1="7" y1="12" x2="12" y2="12"></line>
+                  </svg>
+                  <input type="text" id="login-username" class="login-input" placeholder="Enter CMMS Username..."
+                    required autofocus>
+                </div>
+              </div>
+
+              <div class="login-field-group">
+                <label for="login-password" class="login-label">CMMS Password</label>
+                <div class="login-input-wrap">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                  </svg>
+                  <input type="password" id="login-password" class="login-input" placeholder="Enter CMMS Password..."
+                    required>
+                </div>
+              </div>
+
+              <div class="login-status-message" id="login-error-msg" style="display: none;"></div>
+
+              <div class="login-actions" style="display: flex; justify-content: flex-end; margin-top: 16px;">
+                <button type="submit" class="console-btn primary login-submit-btn" id="btn-submit-login">Sign
+                  In</button>
+              </div>
+            </form>
+          </div>
+
+          <!-- State B: Logged In Account Details View (Visible when signed in) -->
+          <div id="cmms-logged-in-view" style="display: none;">
+            <div class="logged-in-card">
+              <div class="logged-in-status-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="28" height="28">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                  <circle cx="12" cy="7" r="4"></circle>
+                </svg>
+              </div>
+              <div class="logged-in-details">
+                <span class="logged-in-label">Logged in as</span>
+                <h3 class="logged-in-name" id="logged-in-user-name">Operator</h3>
+                <span class="logged-in-role" id="logged-in-user-role">Inspector</span>
+                <span class="logged-in-dept" id="logged-in-user-dept">Quality</span>
+              </div>
+            </div>
+
+            <div class="login-actions" style="display: flex; justify-content: flex-end; margin-top: 20px;">
+              <button type="button" class="console-btn secondary" id="btn-logout-cmms">Sign Out</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- Hardware & Conveyor Simulation Dialog -->
+    <div class="modal-backdrop" id="simulator-modal" role="dialog" aria-modal="true" aria-labelledby="sim-dialog-title">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <span class="modal-cell-badge badge-mqtt">CONVEYOR &amp; FTP</span>
+            <h3 id="sim-dialog-title">Conveyor MQTT &amp; EL Testing Simulator</h3>
+          </div>
+          <button type="button" class="btn-close-modal" id="btn-close-sim-modal"
+            aria-label="Close Simulator">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="login-prompt-desc">Test real-time conveyor MQTT arrivals and EL image acquisition before factory
+            wiring:</p>
+
+          <div class="login-field-group">
+            <label for="sim-panel-input" class="login-label">Publish Conveyor Panel Arrival (MQTT Event)</label>
+            <div class="sim-panel-row">
+              <input type="text" id="sim-panel-input" class="console-input-subtle" value="USM0112208260078"
+                placeholder="e.g. USM0112208260078">
+              <button type="button" id="btn-trigger-mqtt-sim" class="console-btn-sm primary">Publish Event</button>
+            </div>
+          </div>
+
+          <div class="sim-presets-group">
+            <span class="demo-bar-label">Conveyor Test Modules:</span>
+            <button type="button" class="btn-demo-user btn-sim-preset" data-panel="USM0112208260078"
+              data-sample="solar_el_sample.jpg">USM0112208260078</button>
+            <button type="button" class="btn-demo-user btn-sim-preset" data-panel="USM0111208260304"
+              data-sample="solar_el_sample.jpg">USM0111208260304</button>
+            <button type="button" class="btn-demo-user btn-sim-preset" data-panel="USM0111208260302"
+              data-sample="sample_el_2.jpg">USM0111208260302</button>
+            <button type="button" class="btn-demo-user btn-sim-preset" data-panel="USM0111208260208"
+              data-sample="sample_el_3.jpg">USM0111208260208</button>
+            <button type="button" class="btn-demo-user btn-sim-preset" data-panel="USM0111208260303"
+              data-sample="sample_el_4.jpg">USM0111208260303</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Dialog for SQL payload inspection -->
+    <div class="modal-backdrop" id="sql-modal">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <span class="modal-cell-badge badge-sql">MES SYNC</span>
+            <h3>SQL Backend Statements</h3>
+          </div>
+          <button type="button" class="btn-close-modal" id="btn-close-sql-modal"
+            aria-label="Close SQL Dialog">&times;</button>
+        </div>
+        <div class="modal-body">
+          <nav class="code-tab-nav" aria-label="Payload Type Tabs">
+            <button type="button" class="code-tab active" data-tab="sql-insert">INSERT INTO Statements</button>
+            <button type="button" class="code-tab" data-tab="sql-schema">DDL Table Schema</button>
+            <button type="button" class="code-tab" data-tab="sql-json">REST JSON Payload</button>
+          </nav>
+          <pre class="code-block" id="sql-code-display">-- Generating queries...</pre>
+        </div>
+        <div class="modal-footer">
+          <span class="status-indicator-text" id="sql-sync-indicator">Ready to sync</span>
+          <div class="modal-footer-right">
+            <button type="button" class="console-btn secondary" id="btn-copy-sql">Copy Payload</button>
+            <button type="button" class="console-btn primary" id="btn-execute-sql-mock">Execute Commit (Mock)</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hidden Backward Compatibility Dialog Anchor (Kept dormant) -->
+    <div id="defect-modal" style="display: none;"></div>
+
+    <!-- System Toast Notifications Container -->
+    <div class="toast-container" id="toast-container" aria-live="polite"></div>
+
+  </div>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+
+</html>

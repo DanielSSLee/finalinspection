@@ -1,0 +1,4 @@
+pymssql>=2.2.8
+pyodbc>=5.0.0
+paho-mqtt>=1.6.1,<2.0.0
+python-dotenv>=1.0.0

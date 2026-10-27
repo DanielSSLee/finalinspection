@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FVI Station 01 — Monitor 2: Sun Simulator & Hi-Pot Metrology Telemetry</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700;800&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="telemetry.css">
+</head>
+<body>
+
+  <!-- Top Header Navigation -->
+  <header class="telemetry-header">
+    <div class="brand-section">
+      <span class="brand-badge">MONITOR 2</span>
+      <div>
+        <h1 class="brand-title">ELECTRICAL METROLOGY & SAFETY CONSOLE</h1>
+        <div class="brand-subtitle">Inline Stations 1–5 Telemetry (Pre-EL • SunSim • Post-EL • Hi-Pot • FVI)</div>
+      </div>
+    </div>
+
+    <!-- Center Active Module Readout -->
+    <div class="module-sync-section">
+      <div class="module-id-display">
+        <span class="module-label">Active Module:</span>
+        <span class="module-val" id="display-module-id">USM0112208260078</span>
+      </div>
+      <div class="status-indicator-pill live" id="pill-sync-status" title="Synchronized live with Screen 1 via BroadcastChannel">
+        <span class="status-pip"></span>
+        <span>SCREEN 1 SYNCED</span>
+      </div>
+    </div>
+
+    <!-- Header Actions & Database Status -->
+    <div class="header-actions">
+      <!-- SunSim DB Indicator -->
+      <div class="status-indicator-pill fallback" id="pill-sunsim-db" title="SunSim database: Microsoft SQL Server / SQLExpress">
+        <span class="status-pip"></span>
+        <span>SQLEXPRESS</span>
+      </div>
+
+      <!-- Hi-Pot DB Indicator -->
+      <div class="status-indicator-pill fallback" id="pill-hipot-db" title="Hi-Pot database: PostgreSQL Dielectric Safety">
+        <span class="status-pip"></span>
+        <span>HIPOT PG</span>
+      </div>
+
+      <!-- Fullscreen Button -->
+      <button type="button" class="btn-screen-action" id="btn-toggle-fullscreen" title="Toggle Fullscreen on Monitor 2">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+        </svg>
+        <span>Fullscreen</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Viewport -->
+  <main class="telemetry-viewport">
+
+    <!-- 1. Top 5-Station Manufacturing Pipeline -->
+    <section class="pipeline-bar" id="pipeline-container" aria-label="Manufacturing Pipeline">
+      <!-- Card 1: Pre-EL -->
+      <div class="pipeline-card" id="pipe-card-1">
+        <div class="pipe-header">
+          <span class="pipe-name">1. Pre-EL</span>
+          <span class="badge-status pass" id="pipe-badge-1">PASS</span>
+        </div>
+        <div class="pipe-content">
+          <div class="pipe-datetime">
+            <span class="pipe-date" id="pipe-date-1">26-08-22</span>
+            <span class="pipe-time" id="pipe-time-1">09:38:36</span>
+          </div>
+          <div class="pipe-grade-circle" id="pipe-grade-1">A</div>
+        </div>
+      </div>
+
+      <!-- Card 2: Sun Simulator -->
+      <div class="pipeline-card" id="pipe-card-2">
+        <div class="pipe-header">
+          <span class="pipe-name">2. Sun Simulator</span>
+          <span class="badge-status bin" id="pipe-badge-2">540W</span>
+        </div>
+        <div class="pipe-content">
+          <div class="pipe-datetime">
+            <span class="pipe-date" id="pipe-date-2">26-08-22</span>
+            <span class="pipe-time" id="pipe-time-2">17:03:10</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card 3: Post-EL -->
+      <div class="pipeline-card" id="pipe-card-3">
+        <div class="pipe-header">
+          <span class="pipe-name">3. Post-EL</span>
+          <span class="badge-status pass" id="pipe-badge-3">PASS</span>
+        </div>
+        <div class="pipe-content">
+          <div class="pipe-datetime">
+            <span class="pipe-date" id="pipe-date-3">26-08-22</span>
+            <span class="pipe-time" id="pipe-time-3">17:06:26</span>
+          </div>
+          <div class="pipe-grade-circle" id="pipe-grade-3">A</div>
+        </div>
+      </div>
+
+      <!-- Card 4: Hi-Pot -->
+      <div class="pipeline-card" id="pipe-card-4">
+        <div class="pipe-header">
+          <span class="pipe-name">4. Hi-Pot</span>
+          <span class="badge-status pass" id="pipe-badge-4">PASS</span>
+        </div>
+        <div class="pipe-content">
+          <div class="pipe-datetime">
+            <span class="pipe-date" id="pipe-date-4">26-08-22</span>
+            <span class="pipe-time" id="pipe-time-4">17:08:41</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card 5: FVI -->
+      <div class="pipeline-card active-station" id="pipe-card-5">
+        <div class="pipe-header">
+          <span class="pipe-name">5. FVI</span>
+          <span class="badge-status live" id="pipe-badge-5">LIVE</span>
+        </div>
+        <div class="pipe-content">
+          <div class="pipe-datetime">
+            <span class="pipe-date" id="pipe-date-5">TODAY</span>
+            <span class="pipe-time" id="pipe-time-5">ACTIVE SYNC</span>
+          </div>
+          <div class="pipe-live-pulse" title="Current Visual Inspection Station"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. Expanded Two-Column Metrology Dashboard -->
+    <div class="telemetry-main-grid">
+
+      <!-- LEFT COLUMN: Metrology Grid, Hi-Pot Analyzer, Station Attributes Table -->
+      <div class="col-metrology-left">
+
+        <!-- A. Sun Simulator Flasher Metrology (9 KPI Cards) -->
+        <section class="sunsim-kpi-grid" aria-label="Sun Simulator Flasher Metrology">
+          <!-- Card 1: Pmax & Bin (spans 1.3x) -->
+          <div class="kpi-card kpi-pmax-bin">
+            <div class="kpi-label">MAX POWER (PMAX &amp; BIN)</div>
+            <div class="kpi-val-row">
+              <span class="kpi-val pmax-accent" id="val-pmax">544.6</span>
+              <span class="kpi-unit">W</span>
+            </div>
+            <div class="kpi-sub-row">
+              <span class="module-spec-code" id="val-module-model">144-M10-HC</span>
+              <span class="bin-badge" id="val-bin-tag">Bin: 540W</span>
+            </div>
+          </div>
+
+          <!-- Card 2: Open Circuit Voc -->
+          <div class="kpi-card">
+            <div class="kpi-label">OPEN CIRCUIT VOC</div>
+            <div class="kpi-val-row">
+              <span class="kpi-val" id="val-voc">50.35</span>
+              <span class="kpi-unit">V</span>
+            </div>
+          </div>
+
+          <!-- Card 3: Short Circuit Isc -->
+          <div class="kpi-card">
+            <div class="kpi-label">SHORT CIRCUIT ISC</div>
+            <div class="kpi-val-row">
+              <span class="kpi-val" id="val-isc">13.56</span>
+              <span class="kpi-unit">A</span>
+            </div>
+          </div>
+
+          <!-- Card 4: Fill Factor FF -->
+          <div class="kpi-card">
+            <div class="kpi-label">FILL FACTOR (FF)</div>
+            <div class="kpi-val-row">
+              <span class="kpi-val" id="val-ff">79.75</span>
+              <span class="kpi-unit">%</span>
+            </div>
+          </div>
+
+          <!-- Card 5: Vmp Voltage -->
+          <div class="kpi-card">
+            <div class="kpi-label">VMP VOLTAGE</div>
+            <div class="kpi-val-row">
+              <span class="kpi-val" id="val-vmp">42.28</span>
+              <span class="kpi-unit">V</span>
+            </div>
+          </div>
+
+          <!-- Card 6: Imp Current -->
+          <div class="kpi-card">
+            <div class="kpi-label">IMP CURRENT</div>
+            <div class="kpi-val-row">
+              <span class="kpi-val" id="val-imp">12.88</span>
+              <span class="kpi-unit">A</span>
+            </div>
+          </div>
+
+          <!-- Card 7: Module Eff -->
+          <div class="kpi-card">
+            <div class="kpi-label">MODULE EFF</div>
+            <div class="kpi-val-row">
+              <span class="kpi-val" id="val-eff">0.23</span>
+              <span class="kpi-unit">%</span>
+            </div>
+          </div>
+
+          <!-- Card 8: Flasher Temp -->
+          <div class="kpi-card">
+            <div class="kpi-label">FLASHER TEMP</div>
+            <div class="kpi-val-row">
+              <span class="kpi-val" id="val-temp">34.3</span>
+              <span class="kpi-unit">°C</span>
+            </div>
+          </div>
+
+          <!-- Card 9: Inspection Time -->
+          <div class="kpi-card kpi-inspection-time">
+            <div class="kpi-label">INSPECTION TIME</div>
+            <div class="kpi-val-row time-row">
+              <span class="kpi-val time-mono" id="val-inspection-time">26-08-22 09:38:36</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- B. Hi-Pot / Safety Analyzer (DCW • IR • GB) -->
+        <section class="hipot-analyzer-section" aria-label="Hi-Pot Safety Analyzer">
+          <div class="hipot-header-row">
+            <div class="hipot-title-group">
+              <svg class="hipot-shield-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                <circle cx="12" cy="12" r="2.5" fill="currentColor"></circle>
+              </svg>
+              <h2 class="hipot-title">Hi-Pot / Safety Analyzer (DCW • IR • GB)</h2>
+            </div>
+            <span class="hipot-master-badge" id="val-hipot-badge">HIPOT: PASS</span>
+          </div>
+
+          <div class="hipot-subcards-row">
+            <!-- 1. DCW -->
+            <div class="hipot-subcard">
+              <div class="subcard-top">
+                <span class="subcard-title">1. DCW (DC Withstand)</span>
+                <span class="subcard-badge pass" id="badge-dcw">PASS</span>
+              </div>
+              <div class="subcard-metric" id="val-dcw-display">
+                <span class="metric-num" id="val-dcw">10.00</span>
+                <span class="metric-unit">µA</span>
+              </div>
+              <div class="subcard-desc">DC Withstanding (Leakage)</div>
+            </div>
+
+            <!-- 2. IR -->
+            <div class="hipot-subcard">
+              <div class="subcard-top">
+                <span class="subcard-title">2. IR (Insulation Resistance)</span>
+                <span class="subcard-badge pass" id="badge-ir">PASS</span>
+              </div>
+              <div class="subcard-metric" id="val-ir-display">
+                <span class="metric-num" id="val-ir">1680.0</span>
+                <span class="metric-unit">MΩ</span>
+              </div>
+              <div class="subcard-desc">Insulation Resistance</div>
+            </div>
+
+            <!-- 3. GB -->
+            <div class="hipot-subcard">
+              <div class="subcard-top">
+                <span class="subcard-title">3. GB (Ground Bond)</span>
+                <span class="subcard-badge pass" id="badge-gb">PASS</span>
+              </div>
+              <div class="subcard-metric" id="val-gb-display">
+                <span class="metric-num" id="val-gb">14.0</span>
+                <span class="metric-unit">mΩ</span>
+              </div>
+              <div class="subcard-desc">Ground Continuity (25A)</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- C. All Station Attributes & Raw Telemetry (Collapsible) -->
+        <section class="attributes-section" aria-label="Station Attributes">
+          <div class="attributes-header" id="attributes-toggle-btn">
+            <div class="attributes-title-group">
+              <svg class="chevron-icon" id="attr-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+              <svg class="list-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="8" y1="6" x2="21" y2="6"></line>
+                <line x1="8" y1="12" x2="21" y2="12"></line>
+                <line x1="8" y1="18" x2="21" y2="18"></line>
+                <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                <line x1="3" y1="18" x2="3.01" y2="18"></line>
+              </svg>
+              <span class="attributes-title">All Station Attributes &amp; Raw Telemetry</span>
+            </div>
+            <span class="table-count-badge" id="attr-row-count">5 records</span>
+          </div>
+
+          <div class="attributes-table-wrap" id="attributes-table-wrap">
+            <table class="attributes-table">
+              <tbody>
+                <tr>
+                  <td class="attr-key">Serial Number (SN)</td>
+                  <td class="attr-val mono font-bold" id="attr-sn">USM0112208260078</td>
+                </tr>
+                <tr>
+                  <td class="attr-key">Overall Status</td>
+                  <td class="attr-val pass-highlight" id="attr-status">LINE PASS</td>
+                </tr>
+                <tr>
+                  <td class="attr-key">EL Grade Classification</td>
+                  <td class="attr-val" id="attr-el-grade">A (Code: 0)</td>
+                </tr>
+                <tr>
+                  <td class="attr-key">Rework Trace Status</td>
+                  <td class="attr-val" id="attr-rework">First-Pass (No Rework)</td>
+                </tr>
+                <tr>
+                  <td class="attr-key">Latest Inspection Timestamp</td>
+                  <td class="attr-val mono" id="attr-timestamp">26-08-22 09:38:36</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- RIGHT COLUMN: Dual-Axis I-V & P-V Curve Chart & Run Charts -->
+      <div class="col-metrology-right">
+
+        <!-- D. Dual-Axis I-V & P-V Curve (Sun Simulator) -->
+        <section class="chart-card" aria-label="I-V & P-V Curve Chart">
+          <div class="chart-card-header">
+            <div class="chart-title-group">
+              <svg class="chart-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="20" x2="18" y2="10"></line>
+                <line x1="12" y1="20" x2="12" y2="4"></line>
+                <line x1="6" y1="20" x2="6" y2="14"></line>
+              </svg>
+              <h2 class="chart-title">I-V &amp; P-V Curve (Sun Simulator)</h2>
+            </div>
+            <div class="chart-legend-group">
+              <div class="legend-item">
+                <span class="legend-dot iv"></span>
+                <span class="legend-text">I-V Curve</span>
+              </div>
+              <div class="legend-item">
+                <span class="legend-dot pv"></span>
+                <span class="legend-text">P-V Curve</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Interactive SVG Dual-Axis Chart Canvas -->
+          <div class="chart-viewport-wrap">
+            <svg id="chart-svg" class="chart-svg" viewBox="0 0 760 380" preserveAspectRatio="none">
+              <!-- Dynamically populated via telemetry.js -->
+            </svg>
+            <div id="chart-tooltip" class="chart-tooltip"></div>
+          </div>
+        </section>
+
+        <!-- E. Historical Run Chart & Power Bin Distribution Deck -->
+        <div class="run-chart-deck">
+          <!-- 1. Recent Module Pmax Historical Run Chart -->
+          <section class="mini-card run-chart-card">
+            <div class="mini-card-header">
+              <div class="mini-card-title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                </svg>
+                <span>Recent Module Pmax Run Chart (Last 15 Modules)</span>
+              </div>
+              <span class="target-spec-label">Target: 540W – 545W</span>
+            </div>
+            <div class="run-chart-svg-wrap">
+              <svg id="run-chart-svg" class="run-chart-svg" viewBox="0 0 460 110" preserveAspectRatio="none">
+                <!-- Dynamically populated via telemetry.js -->
+              </svg>
+            </div>
+          </section>
+
+          <!-- 2. Power Bin Distribution -->
+          <section class="mini-card bin-dist-card">
+            <div class="mini-card-header">
+              <div class="mini-card-title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path>
+                  <path d="M22 12A10 10 0 0 0 12 2v10z"></path>
+                </svg>
+                <span>Power Bin Distribution (Today's Run)</span>
+              </div>
+              <span class="total-tested-label" id="val-total-tested">154 modules</span>
+            </div>
+            <div class="bin-dist-body" id="bin-dist-body">
+              <div class="bin-progress-stacked" id="bin-stacked-bar">
+                <div class="bin-seg" style="width: 76.6%; background-color: #06b6d4;" title="540W: 76.6%"></div>
+                <div class="bin-seg" style="width: 20.1%; background-color: #3b82f6;" title="545W: 20.1%"></div>
+                <div class="bin-seg" style="width: 3.3%; background-color: #10b981;" title="550W: 3.3%"></div>
+              </div>
+              <div class="bin-legend-pills" id="bin-legend-pills">
+                <div class="bin-pill"><span class="pill-dot" style="background:#06b6d4;"></span><span class="pill-name">540W</span><span class="pill-pct">76.6% (118)</span></div>
+                <div class="bin-pill"><span class="pill-dot" style="background:#3b82f6;"></span><span class="pill-name">545W</span><span class="pill-pct">20.1% (31)</span></div>
+                <div class="bin-pill"><span class="pill-dot" style="background:#10b981;"></span><span class="pill-name">550W</span><span class="pill-pct">3.3% (5)</span></div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- Bottom Global Status Footer -->
+  <footer class="telemetry-footer">
+    <div class="footer-correlation">
+      <svg class="correlation-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+      </svg>
+      <span id="footer-status-msg">Electrical metrology and safety parameters correlate with Grade A visual inspection. Zero dielectric anomalies.</span>
+    </div>
+    <div class="footer-timestamp" id="footer-timestamp">LAST SYNC: Ready</div>
+  </footer>
+
+  <script src="telemetry.js"></script>
+</body>
+</html>
