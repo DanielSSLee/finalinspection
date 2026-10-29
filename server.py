@@ -284,7 +284,7 @@ def get_sunsim_telemetry(module_id):
     attributes = [
         {"key": "Serial Number (SN)", "value": module_id or "USM0112208260078", "highlight": False},
         {"key": "Overall Status", "value": "LINE PASS", "highlight": True, "badge_type": "pass"},
-        {"key": "EL Grade Classification", "value": "A (Code: 0)", "highlight": False},
+        {"key": "EL Grade Classification", "value": "A", "highlight": False},
         {"key": "Rework Trace Status", "value": "First-Pass (No Rework)", "highlight": False},
         {"key": "Latest Inspection Timestamp", "value": flash_time, "highlight": False}
     ]
@@ -1286,7 +1286,9 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
             grade = GRADE_MAP.get(raw_grade, raw_grade)[:1]
             tester_name = str(payload.get("tester_name") or payload.get("operator_name", "Inspector")).strip()
 
-            if not module_id:
+            if not module_id or len(module_id) != 16 or not module_id.startswith("USM"):
+                self.send_json(400, {"error": "Module serial must start with USM and have 16 characters (including USM)"})
+                return
                 self.send_json(400, {"error": "Missing required module_id"})
                 return
 

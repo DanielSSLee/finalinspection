@@ -60,12 +60,12 @@
 
       <!-- Module Scanner & Authenticated CMMS Inspector Badge -->
       <div class="header-segment module-scanner">
-        <div class="scanner-field" title="Photovoltaic Module Serial Number (Auto-populated by Conveyor MQTT)">
+        <div class="scanner-field" id="scanner-field" title="Photovoltaic Module Serial Number (Must start with USM and have 16 characters)">
           <svg class="scanner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="2" y="4" width="20" height="16" rx="1"></rect>
             <path d="M6 8h3M6 12h2M6 16h4M13 8h5M13 12h2M13 16h5"></path>
           </svg>
-          <input type="text" id="module-id-input" value="USM0112208260078" maxlength="16" spellcheck="false"
+          <input type="text" id="module-id-input" value="" maxlength="16" spellcheck="false"
             autocomplete="off" placeholder="e.g. USM0112208260078">
         </div>
 
@@ -183,7 +183,7 @@
         <div class="dock-block telemetry-block">
           <div class="telemetry-cell">
             <span class="telemetry-key">Module</span>
-            <span class="telemetry-val text-mono" id="summary-module-id">USM-2026-FVI-849</span>
+            <span class="telemetry-val text-mono" id="summary-module-id">Pending Serial</span>
           </div>
           <div class="telemetry-cell">
             <span class="telemetry-key">Grade</span>
@@ -248,6 +248,16 @@
           <div class="toolbar-title-group">
             <span class="stage-status-indicator"></span>
             <span class="telemetry-pill" id="live-coord-indicator">Hover image to view grid</span>
+          </div>
+
+          <!-- Example EL Image Notice for Graders -->
+          <div class="el-example-notice" id="el-example-notice" role="status">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" aria-hidden="true">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+              <line x1="12" y1="9" x2="12" y2="13"></line>
+              <line x1="12" y1="17" x2="12.01" y2="17"></line>
+            </svg>
+            <span><strong>NOTICE:</strong> Current EL image is an example and not the real module image.</span>
           </div>
 
           <div class="toolbar-tool-group">
@@ -698,7 +708,7 @@
                     </tr>
                     <tr>
                       <td class="attr-key">EL Grade Classification</td>
-                      <td class="attr-val" id="attr-el-grade">A (Code: 0)</td>
+                      <td class="attr-val" id="attr-el-grade">A</td>
                     </tr>
                     <tr>
                       <td class="attr-key">Rework Trace Status</td>

@@ -23,7 +23,7 @@ if (typeof window !== "undefined" && window.location.protocol === "file:" && !co
 
 // Application State
 const state = {
-  moduleId: 'USM0112208260078', // 16-char photovoltaic module serial number (VARCHAR(16))
+  moduleId: '', // 16-char photovoltaic module serial number starting with USM (VARCHAR(16))
   grade: null, // null | 'A' | 'B' | 'X' (No grade selected initially)
   defects: new Map(), // key: 'C8', value: defect object
   activeCell: null, // { coord: 'C8', row: 'C', col: 8 }
@@ -101,6 +101,7 @@ const soundFx = {
 
 // DOM Cache
 const dom = {
+  scannerField: document.getElementById('scanner-field'),
   moduleIdInput: document.getElementById('module-id-input'),
   operatorInput: document.getElementById('operator-input'),
   btnOperatorProfile: document.getElementById('btn-operator-profile'),
@@ -413,6 +414,9 @@ function handleNewConveyorModule(panelId, source = 'Conveyor Sensor') {
   // Update current module
   state.moduleId = panelId;
   dom.moduleIdInput.value = panelId;
+  if (dom.scannerField) {
+    dom.scannerField.classList.remove('highlight-error');
+  }
   dom.summaryModuleId.textContent = panelId;
   broadcastModuleChange(panelId);
 
@@ -836,7 +840,7 @@ function updateSummaryAndHistory() {
     dom.summaryTotalTags.textContent = `${count} ${count === 1 ? 'cell' : 'cells'} tagged`;
   }
   dom.historyBadgeCount.textContent = `${count} ${count === 1 ? 'item' : 'items'}`;
-  dom.summaryModuleId.textContent = state.moduleId || 'N/A';
+  dom.summaryModuleId.textContent = state.moduleId || 'Pending Serial';
 
   dom.historyTbody.innerHTML = '';
   if (count === 0) {
@@ -934,15 +938,15 @@ function setGrade(newGrade) {
   if (dom.summaryGradeBadge) {
     dom.summaryGradeBadge.className = `telemetry-badge grade-tag-${letterGrade.toLowerCase()}`;
     const descriptions = {
-      'A': 'Grade A (Prime) • Code: 0',
-      'B': 'Grade B (Secondary) • Code: 1',
-      'R': 'Retest / Rework • Code: 2',
-      'X': 'Grade X (Reject) • Code: 3'
+      'A': 'Grade A (Prime)',
+      'B': 'Grade B (Secondary)',
+      'R': 'Retest / Rework',
+      'X': 'Grade X (Reject)'
     };
     dom.summaryGradeBadge.textContent = descriptions[letterGrade] || `Grade ${letterGrade}`;
   }
 
-  showToast(`Selected Grade [${letterGrade}] (Database Code: ${numericCode})`, 'info');
+  showToast(`Selected Grade [${letterGrade}]`, 'info');
 }
 
 /**
@@ -968,6 +972,47 @@ function resetGrade() {
  * Persist Grade to Database (table: final_inspections)
  * Requirement: Send 0 (A), 1 (B), 2 (Retest/Rework), 3 (Reject)
  */
+/**
+ * Validate Module Serial Number:
+ * Must be typed in, start with "USM", and have 16 characters total (including "USM").
+ */
+function validateModuleSerial(showFeedback = true) {
+  const rawSerial = (dom.moduleIdInput ? dom.moduleIdInput.value : state.moduleId || '').trim();
+  state.moduleId = rawSerial;
+
+  const isValid = rawSerial.length === 16 && rawSerial.startsWith('USM');
+  if (isValid) {
+    if (dom.scannerField) {
+      dom.scannerField.classList.remove('highlight-error');
+    }
+    return true;
+  }
+
+  if (showFeedback) {
+    let msg = 'Please enter a Module Serial Number (must start with USM and have 16 characters)';
+    if (rawSerial && !rawSerial.startsWith('USM')) {
+      msg = 'Invalid Module Serial: Must start with "USM" and be 16 characters long';
+    } else if (rawSerial && rawSerial.length !== 16) {
+      msg = `Invalid Module Serial: Must be 16 characters including USM (currently ${rawSerial.length}/16)`;
+    }
+    showToast(msg, 'warning');
+    soundFx.beep(260, 0.15);
+
+    const scannerField = dom.scannerField || document.getElementById('scanner-field');
+    if (scannerField) {
+      scannerField.classList.remove('highlight-error');
+      void scannerField.offsetWidth; // Force reflow to re-trigger CSS animations
+      scannerField.classList.add('highlight-error');
+      scannerField.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    if (dom.moduleIdInput) {
+      dom.moduleIdInput.focus();
+    }
+  }
+
+  return false;
+}
+
 function persistGradeToDatabase(grade) {
   const numericGrade = GRADE_NUMERIC_MAP[grade] || '0';
   const tester = (state.currentOperator && (state.currentOperator.name || state.currentOperator.username)) || 'Inspector';
@@ -987,7 +1032,7 @@ function persistGradeToDatabase(grade) {
     .then(data => {
       if (data.success && dom.pillDbStatus) {
         dom.pillDbStatus.className = 'status-indicator-pill status-live';
-        dom.pillDbStatus.innerHTML = `<span class="status-pip"></span><span>GRADE [${grade} / Code ${numericGrade}] SAVED</span>`;
+        dom.pillDbStatus.innerHTML = `<span class="status-pip"></span><span>GRADE [${grade}] SAVED</span>`;
         setTimeout(() => {
           dom.pillDbStatus.innerHTML = '<span class="status-pip"></span><span>DB LIVE</span>';
         }, 2500);
@@ -1285,8 +1330,11 @@ function fitInspectionStage() {
 function attachEventListeners() {
   // Module ID syncing
   dom.moduleIdInput.addEventListener('input', (e) => {
+    if (dom.scannerField) {
+      dom.scannerField.classList.remove('highlight-error');
+    }
     state.moduleId = e.target.value.trim();
-    dom.summaryModuleId.textContent = state.moduleId || 'N/A';
+    dom.summaryModuleId.textContent = state.moduleId || 'Pending Serial';
     broadcastModuleChange(state.moduleId);
   });
 
@@ -1506,6 +1554,10 @@ function attachEventListeners() {
     e.stopPropagation();
     if (!state.activeCell || !state.selectedDefectCode) return;
 
+    if (!validateModuleSerial(true)) {
+      return;
+    }
+
     if (!state.currentOperator) {
       showToast('Please sign in with your CMMS account before logging defects', 'warning');
       soundFx.beep(300, 0.1);
@@ -1718,7 +1770,21 @@ function attachEventListeners() {
   // Submit Grade: Sends Overall Inspection to database table final_inspections
   // (record_id and tested_at are auto-generated by the database)
   dom.btnSaveInspection.addEventListener('click', () => {
-    // 1. Validate Grade Selection
+    // 1. Validate Module Serial (Must be typed in, start with USM, and have 16 characters including USM)
+    if (!validateModuleSerial(true)) {
+      // Also highlight grade control if grade is not chosen yet
+      if (!state.grade) {
+        const gradeControl = document.getElementById('segmented-grade-control');
+        if (gradeControl) {
+          gradeControl.classList.remove('highlight-error');
+          void gradeControl.offsetWidth;
+          gradeControl.classList.add('highlight-error');
+        }
+      }
+      return;
+    }
+
+    // 2. Validate Grade Selection
     if (!state.grade) {
       showToast('Please select a Grade (A, B, Retest/Rework, or Reject) before submitting', 'warning');
       soundFx.beep(260, 0.15);
@@ -1740,7 +1806,25 @@ function attachEventListeners() {
       return;
     }
 
+    const submittedModuleId = state.moduleId;
+    const submittedGrade = state.grade;
     const numericGrade = GRADE_NUMERIC_MAP[state.grade] || '0';
+
+    const resetAfterSubmit = () => {
+      state.moduleId = '';
+      if (dom.moduleIdInput) {
+        dom.moduleIdInput.value = '';
+        dom.moduleIdInput.focus();
+      }
+      if (dom.scannerField) {
+        dom.scannerField.classList.remove('highlight-error');
+      }
+      state.defects.clear();
+      resetGrade();
+      updateSummaryAndHistory();
+      renderDefectPins();
+      closeComicBubble();
+    };
     const payload = {
       module_id: (state.moduleId || '').slice(0, 16), // nvarchar(16)
       grade: numericGrade, // 0 = A, 1 = B, 2 = Retest/Rework, 3 = Reject
@@ -1755,11 +1839,12 @@ function attachEventListeners() {
     })
       .then(res => res.json())
       .then(data => {
-        showToast(`Module ${state.moduleId} submitted as Grade [${state.grade}] (Code: ${numericGrade})!`, 'success');
+        showToast(`Module ${submittedModuleId} submitted as Grade [${submittedGrade}]!`, 'success');
+        resetAfterSubmit();
         soundFx.beep(950, 0.12);
         if (dom.pillDbStatus) {
           dom.pillDbStatus.className = 'status-indicator-pill status-live';
-          dom.pillDbStatus.innerHTML = `<span class="status-pip"></span><span>GRADE [${state.grade} / Code ${numericGrade}] SAVED</span>`;
+          dom.pillDbStatus.innerHTML = `<span class="status-pip"></span><span>GRADE [${submittedGrade}] SAVED</span>`;
           setTimeout(() => {
             dom.pillDbStatus.innerHTML = '<span class="status-pip"></span><span>DB LIVE</span>';
           }, 2500);
@@ -1768,6 +1853,7 @@ function attachEventListeners() {
       .catch(() => {
         showToast(`Database offline: grade queued locally`, 'info');
         soundFx.beep(650, 0.08);
+        resetAfterSubmit();
       });
   });
 
