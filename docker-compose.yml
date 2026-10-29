@@ -12,13 +12,12 @@ services:
     environment:
       - TZ=America/Chicago
     volumes:
-      # Persist local SQLite fallback DB and EL camera image cache
-      - fvi_db_data:/app
+      # Live bind-mount so code & UI updates reflect immediately without stale volume caching
+      - .:/app
       - ./el_cache:/app/el_cache
     # extra_hosts:
     #   # Optional: map custom hostnames to plant server IPs if DNS is not available
     #   - "cmms-auth:${CMMS_HOST:-localhost}"
     #   - "mes-mqtt:${MQTT_BROKER:-localhost}"
 
-volumes:
-  fvi_db_data:
+

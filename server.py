@@ -616,21 +616,35 @@ def init_database():
             cursor.execute("ALTER TABLE final_inspection_defects ADD COLUMN defect_location VARCHAR(4)")
         except Exception:
             pass
+        try:
+            cursor.execute("ALTER TABLE cmms_users ADD COLUMN email TEXT")
+        except Exception:
+            pass
 
         # Seed initial CMMS operators if table is empty
         cursor.execute("SELECT COUNT(*) as cnt FROM cmms_users")
         if cursor.fetchone()["cnt"] == 0:
             demo_users = [
-                ("OP-8492", "vance.k", hashlib.sha256(b"pass123").hexdigest(), "Vance Kowalski", "QC Lead Inspector", "Photovoltaic Modules", "Shift A"),
-                ("OP-3310", "sarah.m", hashlib.sha256(b"pass123").hexdigest(), "Sarah Miller", "QC Metrology Tech", "Photovoltaic Modules", "Shift A"),
-                ("OP-5521", "carlos.r", hashlib.sha256(b"pass123").hexdigest(), "Carlos Reyes", "Line Quality Inspector", "Photovoltaic Modules", "Shift B"),
-                ("OP-9901", "admin", hashlib.sha256(b"admin").hexdigest(), "Plant Administrator", "Quality Assurance Engineer", "Quality Operations", "All Shifts")
+                ("OP-8492", "vance.k", "vance.k@company.com", hashlib.sha256(b"pass123").hexdigest(), "Vance Kowalski", "QC Lead Inspector", "Photovoltaic Modules", "Shift A"),
+                ("OP-3310", "sarah.m", "sarah.m@company.com", hashlib.sha256(b"pass123").hexdigest(), "Sarah Miller", "QC Metrology Tech", "Photovoltaic Modules", "Shift A"),
+                ("OP-5521", "carlos.r", "carlos.r@company.com", hashlib.sha256(b"pass123").hexdigest(), "Carlos Reyes", "Line Quality Inspector", "Photovoltaic Modules", "Shift B"),
+                ("OP-9901", "admin", "admin@company.com", hashlib.sha256(b"admin").hexdigest(), "Plant Administrator", "Quality Assurance Engineer", "Quality Operations", "All Shifts")
             ]
             cursor.executemany("""
-            INSERT INTO cmms_users (user_id, username, password_hash, full_name, role, department, shift)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO cmms_users (user_id, username, email, password_hash, full_name, role, department, shift)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, demo_users)
             conn.commit()
+        else:
+            # Update emails for demo users if missing
+            try:
+                cursor.execute("UPDATE cmms_users SET email = 'vance.k@company.com' WHERE username = 'vance.k' AND (email IS NULL OR email = '')")
+                cursor.execute("UPDATE cmms_users SET email = 'sarah.m@company.com' WHERE username = 'sarah.m' AND (email IS NULL OR email = '')")
+                cursor.execute("UPDATE cmms_users SET email = 'carlos.r@company.com' WHERE username = 'carlos.r' AND (email IS NULL OR email = '')")
+                cursor.execute("UPDATE cmms_users SET email = 'admin@company.com' WHERE username = 'admin' AND (email IS NULL OR email = '')")
+                conn.commit()
+            except Exception:
+                pass
 
 # ---------------------------------------------------------------------------
 # FTP Image Fetcher (Connects to EL Testing PC)
@@ -694,14 +708,15 @@ def verify_cmms_credentials(username, password):
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-            SELECT user_id, username, full_name, role, department, shift
+            SELECT user_id, username, email, full_name, role, department, shift
             FROM cmms_users
-            WHERE (username = ? OR user_id = ?) AND (password_hash = ? OR ? = 'skip_pwd_check')
-            """, (username, username, pwd_hash, password))
+            WHERE (LOWER(username) = LOWER(?) OR LOWER(user_id) = LOWER(?) OR LOWER(COALESCE(email, '')) = LOWER(?))
+              AND (password_hash = ? OR ? = 'skip_pwd_check')
+            """, (username, username, username, pwd_hash, password))
             user = cursor.fetchone()
             if user:
                 return dict(user), None
-            return None, "Invalid CMMS credentials or employee ID"
+            return None, "Invalid CMMS credentials or employee email"
 
     # Mode 2: External REST Login Endpoint (Standard CMMS FastAPI OAuth2 on USMCMMS)
     elif mode == "external_rest":
@@ -764,10 +779,11 @@ def verify_cmms_credentials(username, password):
             with get_db() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                SELECT user_id, username, full_name, role, department, shift
+                SELECT user_id, username, email, full_name, role, department, shift
                 FROM cmms_users
-                WHERE (username = ? OR user_id = ?) AND (password_hash = ? OR ? = 'skip_pwd_check')
-                """, (username, username, pwd_hash, password))
+                WHERE (LOWER(username) = LOWER(?) OR LOWER(user_id) = LOWER(?) OR LOWER(COALESCE(email, '')) = LOWER(?))
+                  AND (password_hash = ? OR ? = 'skip_pwd_check')
+                """, (username, username, username, pwd_hash, password))
                 local_user = cursor.fetchone()
                 if local_user:
                     return dict(local_user), None
@@ -1097,6 +1113,15 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
         if not rel_path or rel_path == "":
             rel_path = "index.html"
         
+        if rel_path in ("unified", "unified.html"):
+            query_str = f"?{parsed.query}" if parsed.query else "?view=split"
+            if "view=split" not in query_str:
+                query_str += "&view=split"
+            self.send_response(302)
+            self.send_header("Location", f"/index.html{query_str}")
+            self.end_headers()
+            return
+        
         file_path = BASE_DIR / rel_path
         if file_path.exists() and file_path.is_file():
             mime_type, _ = mimetypes.guess_type(str(file_path))
@@ -1124,25 +1149,52 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
         except Exception:
             payload = {}
 
-        # 1. Operator CMMS Authentication (Supports local DB, external DB, and REST)
+        # 1. Operator CMMS Authentication (Supports Name-Only login, email, and plant CMMS)
         if path == "/api/auth/login":
-            username = payload.get("username", "").strip()
+            name = str(payload.get("name") or payload.get("username") or payload.get("email", "")).strip()
             password = payload.get("password", "").strip()
             shift = payload.get("shift", "Shift A")
 
-            user_dict, error = verify_cmms_credentials(username, password)
-            if user_dict:
-                user_dict["shift"] = shift
-                token = hashlib.sha256(f"{user_dict['user_id']}{time.time()}".encode("utf-8")).hexdigest()
-                active_sessions[token] = user_dict
-                self.send_json(200, {
-                    "success": True,
-                    "token": token,
-                    "user": user_dict,
-                    "message": f"Welcome, {user_dict['full_name']} ({user_dict.get('role', 'Inspector')})"
-                })
-            else:
-                self.send_json(401, {"success": False, "message": error or "Invalid CMMS credentials or employee ID"})
+            if not name:
+                self.send_json(400, {"success": False, "message": "Please enter your First Name and Last Name"})
+                return
+
+            # Check if user matches any registered employee or direct name
+            user_dict, error = verify_cmms_credentials(name, password or "skip_pwd_check")
+            if not user_dict:
+                # Direct Name-based operator login (First Name Last Name)
+                user_id = name.lower().replace(" ", ".")
+                user_dict = {
+                    "user_id": user_id,
+                    "username": name,
+                    "full_name": name,
+                    "name": name,
+                    "role": "Inspector",
+                    "department": "Quality Operations",
+                    "shift": shift
+                }
+                try:
+                    with get_db() as conn:
+                        cur = conn.cursor()
+                        cur.execute("SELECT user_id FROM cmms_users WHERE user_id = ? OR full_name = ?", (user_id, name))
+                        if not cur.fetchone():
+                            cur.execute("""
+                            INSERT INTO cmms_users (user_id, username, email, password_hash, full_name, role, department, shift)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (user_id, user_id, f"{user_id}@company.com", "direct_login", name, "Inspector", "Quality Operations", shift))
+                            conn.commit()
+                except Exception:
+                    pass
+
+            user_dict["shift"] = shift
+            token = hashlib.sha256(f"{user_dict.get('user_id', name)}{time.time()}".encode("utf-8")).hexdigest()
+            active_sessions[token] = user_dict
+            self.send_json(200, {
+                "success": True,
+                "token": token,
+                "user": user_dict,
+                "message": f"Welcome, {user_dict.get('full_name', name)}. Please remember to log out when done!"
+            })
             return
 
         # 2. Operator Logout
@@ -1215,10 +1267,23 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
             return
 
         # 5. Commit Final Inspection Grade (User table: dbo.Final_Inspections)
-        # Record_ID (IDENTITY) and Tested_At (datetimeoffset)
+        # Requirement: numeric grading 0 (A), 1 (B), 2 (Rework/Retest), 3 (Reject)
         if path == "/api/inspections":
             module_id = str(payload.get("module_id", "")).strip()[:16]
-            grade = str(payload.get("grade") or payload.get("result_code") or payload.get("final_grade", "A")).strip()[:1]
+            raw_grade = str(payload.get("grade") or payload.get("result_code") or payload.get("final_grade", "0")).strip().upper()
+            
+            # Map letter to numeric database grade code: 0=A, 1=B, 2=Retest/Rework, 3=Reject
+            GRADE_MAP = {
+                "A": "0",
+                "B": "1",
+                "R": "2",
+                "X": "3",
+                "0": "0",
+                "1": "1",
+                "2": "2",
+                "3": "3"
+            }
+            grade = GRADE_MAP.get(raw_grade, raw_grade)[:1]
             tester_name = str(payload.get("tester_name") or payload.get("operator_name", "Inspector")).strip()
 
             if not module_id:
@@ -1257,7 +1322,7 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                     action = "Inserted initial grade into"
 
             dest_str = f"MSSQL ({mssql_engine})" if mssql_success else "SQLite (Local Cache)"
-            print(f"[DB Sync] {action} Final_Inspections [{dest_str}]: {module_id} -> Grade [{grade}] by {tester_name} (Local ID #{record_id})")
+            print(f"[DB Sync] {action} Final_Inspections [{dest_str}]: {module_id} -> Grade [{grade}] (Code: {grade}) by {tester_name} (Local ID #{record_id})")
 
             self.send_json(200, {
                 "success": True,

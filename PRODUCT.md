@@ -28,13 +28,13 @@ Unlike generic defect logging forms or heavy enterprise MES interfaces, this sta
   1. Scan or enter Module Serial ID.
   2. Inspect EL camera image for micro-cracks, dark cells, solder voids, and hotspots using zoom/fit and invert filters.
   3. Click specific cell coordinates (e.g., C8, E14) on the 24x6 grid to log defect codes (A1-A2, B1-B2, C1, X1-X3) with optional notes.
-  4. Classify overall module grade: [A] Prime/Pass, [B] Secondary, or [X] Reject/Scrap.
+  4. Classify overall module grade: [A] Prime/Pass, [B] Secondary, [R] Retest/Rework, or [X] Reject/Scrap.
   5. Save inspection and sync payload to backend MES / database.
 
 ## Capabilities and Constraints
 
 - **Cell Matrix**: Strictly 24 Columns (1–24) &times; 6 Rows (A–F) = 144 half-cut monocrystalline/polycrystalline silicon cells.
-- **Module Grade**: Mutually exclusive single selection among Grade A (Prime), Grade B (Secondary), and Grade X (Reject).
+- **Module Grade**: Mutually exclusive single selection among Grade A (Prime), Grade B (Secondary), Grade R (Retest / Rework), and Grade X (Reject).
 - **Defect Catalog**:
   - `A1`: Micro-Crack (Hairline) [Minor / Grade A]
   - `A2`: Cross-Crack / Star Crack [Moderate / Grade B]

@@ -35,7 +35,11 @@ const state = {
   currentOperator: null,
   authToken: null,
   isServerOnline: false,
-  isMqttConnected: false
+  isMqttConnected: false,
+
+  // Multi-Screen / Single-Screen View Mode ('split' | 'visual' | 'telemetry')
+  viewMode: 'split',
+  splitRatio: 'balanced'
 };
 
 // Coordinate Configuration
@@ -114,6 +118,8 @@ const dom = {
   historyTbody: document.getElementById('history-tbody'),
   emptyHistoryState: document.getElementById('empty-history-state'),
   whiteboardNotationPreview: document.getElementById('whiteboard-notation-preview'),
+  inspectionFrame: document.getElementById('inspection-frame'),
+  stageMatrixWrapper: document.getElementById('stage-matrix-wrapper'),
   axisHeaderX: document.getElementById('axis-header-x'),
   axisFooterX: document.getElementById('axis-footer-x'),
   axisHeaderY: document.getElementById('axis-header-y'),
@@ -178,7 +184,17 @@ const dom = {
   btnCopySql: document.getElementById('btn-copy-sql'),
   btnExecuteSqlMock: document.getElementById('btn-execute-sql-mock'),
   sqlSyncIndicator: document.getElementById('sql-sync-indicator'),
-  toastContainer: document.getElementById('toast-container')
+  toastContainer: document.getElementById('toast-container'),
+
+  // View Mode Switcher Elements
+  workbenchShell: document.querySelector('.workbench-shell'),
+  viewBtns: document.querySelectorAll('.view-mode-btn'),
+  btnViewVisual: document.getElementById('btn-view-visual'),
+  btnViewSplit: document.getElementById('btn-view-split'),
+  btnViewTelemetry: document.getElementById('btn-view-telemetry'),
+  btnSplitRatios: document.querySelectorAll('.btn-split-ratio'),
+  btnToggleTelemetryPane: document.getElementById('btn-toggle-telemetry-pane'),
+  unifiedTelemetryContainer: document.getElementById('unified-telemetry-container')
 };
 
 // Inter-Screen Broadcast Channel (Instant zero-latency sync with Monitor 2 Telemetry)
@@ -197,6 +213,11 @@ function broadcastModuleChange(modId) {
         moduleId: modId
       });
     } catch (e) { }
+  }
+
+  // Instant in-window sync for Unified 1-Screen Console
+  if (window.FVITelemetry && typeof window.FVITelemetry.loadTelemetryForModule === 'function') {
+    window.FVITelemetry.loadTelemetryForModule(modId);
   }
 }
 
@@ -223,7 +244,15 @@ function initApp() {
   updateSummaryAndHistory();
   renderDefectPins();
 
-  // Initial synchronization with Monitor 2
+  // Initialize View Mode (defaults to 'split' Unified 1-screen console)
+  const urlParams = new URLSearchParams(window.location.search);
+  const initialMode = urlParams.get('view') || urlParams.get('mode') || localStorage.getItem('fvi_view_mode') || 'split';
+  const initialRatio = urlParams.get('ratio') || localStorage.getItem('fvi_split_ratio') || 'visual-max';
+  setSplitRatio(initialRatio);
+  setViewMode(initialMode, false);
+  fitInspectionStage();
+
+  // Initial synchronization with Monitor 2 & Integrated Telemetry
   broadcastModuleChange(state.moduleId);
 }
 
@@ -235,7 +264,7 @@ function openLoginModal(isInitial = false) {
     // Show Logged In State with "Logged in as..." and Sign Out button
     if (dom.cmmsLoginFormView) dom.cmmsLoginFormView.style.display = 'none';
     if (dom.cmmsLoggedInView) dom.cmmsLoggedInView.style.display = 'block';
-    if (dom.loginDialogTitle) dom.loginDialogTitle.textContent = 'Plant CMMS Account';
+    if (dom.loginDialogTitle) dom.loginDialogTitle.textContent = 'Station Operator Account';
     if (dom.loggedInUserName) dom.loggedInUserName.textContent = state.currentOperator.name || state.currentOperator.username;
     if (dom.loggedInUserRole) dom.loggedInUserRole.textContent = state.currentOperator.role || 'Inspector';
     if (dom.loggedInUserDept) dom.loggedInUserDept.textContent = state.currentOperator.department || 'Quality Operations';
@@ -243,9 +272,8 @@ function openLoginModal(isInitial = false) {
     // Show Login Form
     if (dom.cmmsLoginFormView) dom.cmmsLoginFormView.style.display = 'block';
     if (dom.cmmsLoggedInView) dom.cmmsLoggedInView.style.display = 'none';
-    if (dom.loginDialogTitle) dom.loginDialogTitle.textContent = 'Inspector Login — Plant CMMS Gateway';
+    if (dom.loginDialogTitle) dom.loginDialogTitle.textContent = 'Inspector Login (First Name Last Name)';
     if (dom.loginUsername) dom.loginUsername.value = '';
-    if (dom.loginPassword) dom.loginPassword.value = '';
     if (dom.loginErrorMsg) dom.loginErrorMsg.style.display = 'none';
     setTimeout(() => {
       if (dom.loginUsername) dom.loginUsername.focus();
@@ -858,11 +886,35 @@ function updateSummaryAndHistory() {
   }
 }
 
+// Grade Mapping: MES Database Numeric Standard (0=A, 1=B, 2=Retest/Rework, 3=Reject)
+const GRADE_NUMERIC_MAP = {
+  'A': '0',
+  'B': '1',
+  'R': '2',
+  'X': '3',
+  '0': '0',
+  '1': '1',
+  '2': '2',
+  '3': '3'
+};
+
+const NUMERIC_TO_GRADE_LETTER = {
+  '0': 'A',
+  '1': 'B',
+  '2': 'R',
+  '3': 'X',
+  0: 'A',
+  1: 'B',
+  2: 'R',
+  3: 'X'
+};
+
 /**
- * Handle Grade Toggle (A, B, X) - Single select only
+ * Handle Grade Toggle (A, B, R, X) - Single select only
  */
 function setGrade(newGrade) {
-  state.grade = newGrade;
+  const letterGrade = NUMERIC_TO_GRADE_LETTER[newGrade] || newGrade;
+  state.grade = letterGrade;
   soundFx.beep(520, 0.06);
 
   // Remove any active error highlight
@@ -872,22 +924,25 @@ function setGrade(newGrade) {
   }
 
   dom.gradeButtons.forEach(btn => {
-    const isTarget = btn.dataset.grade === newGrade;
+    const isTarget = btn.dataset.grade === letterGrade;
     btn.classList.toggle('active', isTarget);
     btn.setAttribute('aria-checked', isTarget ? 'true' : 'false');
   });
 
+  const numericCode = GRADE_NUMERIC_MAP[letterGrade] || '0';
+
   if (dom.summaryGradeBadge) {
-    dom.summaryGradeBadge.className = `telemetry-badge grade-tag-${newGrade.toLowerCase()}`;
+    dom.summaryGradeBadge.className = `telemetry-badge grade-tag-${letterGrade.toLowerCase()}`;
     const descriptions = {
-      'A': 'Grade A (Prime)',
-      'B': 'Grade B (Secondary)',
-      'X': 'Grade X (Reject)'
+      'A': 'Grade A (Prime) • Code: 0',
+      'B': 'Grade B (Secondary) • Code: 1',
+      'R': 'Retest / Rework • Code: 2',
+      'X': 'Grade X (Reject) • Code: 3'
     };
-    dom.summaryGradeBadge.textContent = descriptions[newGrade] || `Grade ${newGrade}`;
+    dom.summaryGradeBadge.textContent = descriptions[letterGrade] || `Grade ${letterGrade}`;
   }
 
-  showToast(`Selected Grade [${newGrade}]`, 'info');
+  showToast(`Selected Grade [${letterGrade}] (Database Code: ${numericCode})`, 'info');
 }
 
 /**
@@ -911,14 +966,15 @@ function resetGrade() {
 
 /**
  * Persist Grade to Database (table: final_inspections)
- * Guarantees single grade per module via backend upsert
+ * Requirement: Send 0 (A), 1 (B), 2 (Retest/Rework), 3 (Reject)
  */
 function persistGradeToDatabase(grade) {
+  const numericGrade = GRADE_NUMERIC_MAP[grade] || '0';
   const tester = (state.currentOperator && (state.currentOperator.name || state.currentOperator.username)) || 'Inspector';
   const payload = {
     module_id: (state.moduleId || '').slice(0, 16), // nvarchar(16)
-    grade: grade, // nvarchar(1) (matches dbo.Final_Inspections.Grade)
-    result_code: grade, // backwards compatibility
+    grade: numericGrade, // 0 = A, 1 = B, 2 = Retest/Rework, 3 = Reject
+    result_code: numericGrade, // backwards compatibility
     tester_name: tester
   };
 
@@ -931,7 +987,7 @@ function persistGradeToDatabase(grade) {
     .then(data => {
       if (data.success && dom.pillDbStatus) {
         dom.pillDbStatus.className = 'status-indicator-pill status-live';
-        dom.pillDbStatus.innerHTML = `<span class="status-pip"></span><span>GRADE [${grade}] SAVED</span>`;
+        dom.pillDbStatus.innerHTML = `<span class="status-pip"></span><span>GRADE [${grade} / Code ${numericGrade}] SAVED</span>`;
         setTimeout(() => {
           dom.pillDbStatus.innerHTML = '<span class="status-pip"></span><span>DB LIVE</span>';
         }, 2500);
@@ -945,10 +1001,11 @@ function persistGradeToDatabase(grade) {
  */
 function handleLoginSuccess(userProfile, token) {
   state.authToken = token;
+  const fullName = userProfile.full_name || userProfile.name || userProfile.username || 'Inspector';
   state.currentOperator = {
-    id: userProfile.id || userProfile.user_id || userProfile.username,
-    username: userProfile.username,
-    name: userProfile.full_name || userProfile.name || userProfile.username,
+    id: userProfile.id || userProfile.user_id || fullName.toLowerCase().replace(/\s+/g, '.'),
+    username: userProfile.username || fullName,
+    name: fullName,
     role: userProfile.role || 'Inspector',
     department: (typeof userProfile.department === 'object' ? userProfile.department?.name : userProfile.department) || 'Quality Operations'
   };
@@ -956,15 +1013,14 @@ function handleLoginSuccess(userProfile, token) {
   if (token) localStorage.setItem('fvi_cmms_token', token);
   updateOperatorDisplay();
   dom.loginModal.classList.remove('open');
-  showToast(`Logged in as ${state.currentOperator.name}`, 'success');
+  showToast(`Logged in as ${fullName}. Remember to log out when done!`, 'success');
   soundFx.beep(880, 0.1);
 }
 
 /**
- * Perform CMMS Authentication (Login)
- * Supports both Edge Gateway server and Direct CMMS (when opened from File Explorer via file:///)
+ * Perform Operator Authentication (Name-Only Login: First Name Last Name)
  */
-async function authenticateCMMS(username, password) {
+async function authenticateCMMS(operatorName) {
   dom.loginErrorMsg.style.display = 'none';
   const submitBtn = dom.btnSubmitLogin || document.getElementById('btn-submit-login');
   if (submitBtn) {
@@ -979,86 +1035,43 @@ async function authenticateCMMS(username, password) {
     }
   };
 
-  // 1. If local server.py is running, route through local gateway API
+  const name = (operatorName || '').trim();
+  if (!name) {
+    dom.loginErrorMsg.textContent = 'Please enter your First Name and Last Name';
+    dom.loginErrorMsg.style.display = 'block';
+    resetBtn();
+    return;
+  }
+
+  // 1. If local edge server is online, route through local gateway API
   if (state.isServerOnline) {
     try {
       const res = await fetch(`${config.apiBaseUrl}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ name: name, username: name })
       });
       const data = await res.json();
-      if (data.success) {
+      if (res.ok && data.success) {
         handleLoginSuccess(data.user, data.token);
-        resetBtn();
-        return;
-      } else {
-        dom.loginErrorMsg.textContent = data.message || 'Authentication failed';
-        dom.loginErrorMsg.style.display = 'block';
         resetBtn();
         return;
       }
     } catch (e) {
-      // Local server failed or unreachable; fall through to direct CMMS attempt
+      // Fall through to direct local sign in
     }
   }
 
-  // 2. Direct Plant CMMS Authentication (Optional fallback if direct URL provided in config)
-  const cmmsDirectUrl = (config.cmms && config.cmms.directLoginUrl) || '';
-  if (cmmsDirectUrl) {
-    try {
-      const formParams = new URLSearchParams();
-      formParams.append('username', username);
-      formParams.append('password', password);
-
-      const loginRes = await fetch(cmmsDirectUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: formParams.toString()
-      });
-
-      if (loginRes.ok) {
-        const loginData = await loginRes.json();
-        const token = loginData.access_token;
-
-        let profile = { id: username, username, name: username, role: 'Inspector' };
-        if (config.cmms.directMeUrl) {
-          try {
-            const meRes = await fetch(config.cmms.directMeUrl, {
-              headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (meRes.ok) {
-              const meData = await meRes.json();
-              profile = {
-                id: meData.id || username,
-                username: meData.username || username,
-                name: meData.full_name || meData.username || username,
-                role: meData.role || 'Inspector',
-                department: (typeof meData.department === 'object' ? meData.department?.name : meData.department) || 'Quality Operations'
-              };
-            }
-          } catch (meErr) {
-            console.warn('Could not fetch user profile from CMMS:', meErr);
-          }
-        }
-
-        handleLoginSuccess(profile, token);
-        resetBtn();
-        return;
-      } else {
-        const errJson = await loginRes.json().catch(() => ({}));
-        dom.loginErrorMsg.textContent = errJson.detail || 'Incorrect CMMS username or password';
-        dom.loginErrorMsg.style.display = 'block';
-        resetBtn();
-        return;
-      }
-    } catch (netErr) {
-      // Fall through to error
-    }
-  }
-
-  dom.loginErrorMsg.textContent = 'Could not reach CMMS authentication service. Check edge gateway server or network connection.';
-  dom.loginErrorMsg.style.display = 'block';
+  // 2. Direct local sign-in fallback (offline or direct file:/// use)
+  const localUser = {
+    user_id: name.toLowerCase().replace(/\s+/g, '.'),
+    username: name,
+    full_name: name,
+    name: name,
+    role: 'Inspector',
+    department: 'Quality Operations'
+  };
+  handleLoginSuccess(localUser, 'local_' + Date.now());
   resetBtn();
 }
 
@@ -1068,11 +1081,13 @@ async function authenticateCMMS(username, password) {
 function generateSqlQueries() {
   const defectsList = Array.from(state.defects.values());
   const modId = (state.moduleId || 'USM0111208260304').slice(0, 16);
-  const tester = (state.currentOperator.name || 'Inspector').replace(/'/g, "''");
+  const tester = ((state.currentOperator && state.currentOperator.name) || 'Inspector').replace(/'/g, "''");
+  const numericGrade = GRADE_NUMERIC_MAP[state.grade] || '0';
 
   const insertInspectionSql = `-- 1. Overall Final Inspection (table: dbo.Final_Inspections)
 -- Target Database: PL2
 -- Note: Record_ID is IDENTITY(1,1), Tested_At uses SYSDATETIMEOFFSET()
+-- Numeric Grade Mapping: 0 = Grade A, 1 = Grade B, 2 = Retest/Rework, 3 = Reject
 INSERT INTO dbo.Final_Inspections (
   Module_ID,
   Tested_At,
@@ -1081,7 +1096,7 @@ INSERT INTO dbo.Final_Inspections (
 ) VALUES (
   '${modId}',
   SYSDATETIMEOFFSET(),
-  '${state.grade}',
+  '${numericGrade}',
   '${tester}'
 );`;
 
@@ -1190,6 +1205,80 @@ function showToast(message, type = 'info') {
   }, 2600);
 }
 
+// Cached stage bounding rect
+let stageRect = null;
+function updateStageRect() {
+  if (dom.imageStage) {
+    stageRect = dom.imageStage.getBoundingClientRect();
+  }
+}
+
+/**
+ * Calibrated Responsive Stage Auto-Fitter:
+ * Dynamically fits the 1024:558 EL image and 24x6 grid so that 100% of the image,
+ * coordinates, and Row F are completely visible without ANY vertical clipping.
+ */
+function fitInspectionStage() {
+  if (!dom.inspectionFrame || !dom.imageStage) return;
+
+  const frameRect = dom.inspectionFrame.getBoundingClientRect();
+  if (frameRect.width <= 0 || frameRect.height <= 0) return;
+
+  const padX = 20;
+  const padY = 8;
+  const axisYWidth = 28;
+  const axisTotalXHeight = 36; // 18px top axis + 18px bottom mirror axis
+
+  const availW = Math.max(120, frameRect.width - padX);
+  const availH = Math.max(100, frameRect.height - padY);
+
+  const maxStageW = availW - axisYWidth;
+  const maxStageH = availH - axisTotalXHeight;
+
+  // Physical EL Camera Aspect Ratio is 1024 : 558 (~1.8351)
+  const targetAspect = 1024 / 558;
+
+  let stageW = maxStageW;
+  let stageH = stageW / targetAspect;
+
+  // Constrain by height if needed so Row F and all 6 rows are completely visible
+  if (stageH > maxStageH) {
+    stageH = maxStageH;
+    stageW = stageH * targetAspect;
+  }
+
+  stageW = Math.floor(stageW);
+  stageH = Math.floor(stageH);
+
+  dom.imageStage.style.width = `${stageW}px`;
+  dom.imageStage.style.height = `${stageH}px`;
+
+  if (dom.elImage) {
+    dom.elImage.style.width = '100%';
+    dom.elImage.style.height = '100%';
+    dom.elImage.style.objectFit = 'fill';
+    dom.elImage.style.display = 'block';
+  }
+
+  const totalW = stageW + axisYWidth;
+  if (dom.stageMatrixWrapper) {
+    dom.stageMatrixWrapper.style.width = `${totalW}px`;
+    dom.stageMatrixWrapper.style.height = `${stageH + axisTotalXHeight}px`;
+  }
+  if (dom.axisHeaderX) {
+    dom.axisHeaderX.style.width = `${totalW}px`;
+  }
+  if (dom.axisFooterX) {
+    dom.axisFooterX.style.width = `${totalW}px`;
+  }
+  if (dom.axisHeaderY) {
+    // 97.491% matches active cell rows A-F (excluding bottom timestamp text)
+    dom.axisHeaderY.style.height = `${Math.floor(stageH * 0.97491)}px`;
+  }
+
+  updateStageRect();
+}
+
 /**
  * Attach Event Listeners
  */
@@ -1228,8 +1317,7 @@ function attachEventListeners() {
   dom.loginForm.addEventListener('submit', (e) => {
     e.preventDefault();
     const user = dom.loginUsername.value.trim();
-    const pass = dom.loginPassword.value.trim();
-    authenticateCMMS(user, pass);
+    authenticateCMMS(user);
   });
 
   // Simulator Modal Triggers
@@ -1272,14 +1360,11 @@ function attachEventListeners() {
   });
 
   // Image Hover & Active Reticle Tracking (Cached stage bounds, passive resize/scroll listeners)
-  let stageRect = null;
-  function updateStageRect() {
-    if (dom.imageStage) {
-      stageRect = dom.imageStage.getBoundingClientRect();
-    }
-  }
-  window.addEventListener('resize', updateStageRect, { passive: true });
+  window.addEventListener('resize', fitInspectionStage, { passive: true });
   window.addEventListener('scroll', updateStageRect, { passive: true });
+  if (dom.elImage) {
+    dom.elImage.addEventListener('load', fitInspectionStage);
+  }
 
   dom.imageStage.addEventListener('mouseenter', () => {
     updateStageRect();
@@ -1566,7 +1651,7 @@ function attachEventListeners() {
 
     const key = e.key.toUpperCase();
 
-    if (key === 'A' || key === 'B' || key === 'X') {
+    if (key === 'A' || key === 'B' || key === 'R' || key === 'X') {
       setGrade(key);
     }
     else if (['1', '2', '3', '4', '5', '6', '7', '8'].includes(e.key)) {
@@ -1593,6 +1678,17 @@ function attachEventListeners() {
         closeComicBubble();
       }
     }
+    else if (key === 'M') {
+      // Toggle between 'split' (Unified 1-Screen) and 'visual' (Full Inspection)
+      const nextMode = (state.viewMode === 'split') ? 'visual' : 'split';
+      setViewMode(nextMode);
+    }
+    else if (key === 'V') {
+      setViewMode('visual');
+    }
+    else if (key === 'T') {
+      setViewMode('telemetry');
+    }
     else if (key === 'I') {
       dom.btnToggleInvert.click();
     }
@@ -1615,6 +1711,7 @@ function attachEventListeners() {
 
   // Toolbar: Reset View Fit
   dom.btnResetZoom.addEventListener('click', () => {
+    fitInspectionStage();
     showToast('Inspection view reset to fit', 'info');
   });
 
@@ -1623,7 +1720,7 @@ function attachEventListeners() {
   dom.btnSaveInspection.addEventListener('click', () => {
     // 1. Validate Grade Selection
     if (!state.grade) {
-      showToast('Please select a Grade (A, B, or X) before submitting', 'warning');
+      showToast('Please select a Grade (A, B, Retest/Rework, or Reject) before submitting', 'warning');
       soundFx.beep(260, 0.15);
 
       const gradeControl = document.getElementById('segmented-grade-control');
@@ -1637,16 +1734,17 @@ function attachEventListeners() {
     }
 
     if (!state.currentOperator) {
-      showToast('Please sign in with your CMMS account before submitting grade', 'warning');
+      showToast('Please enter your name before submitting grade', 'warning');
       soundFx.beep(300, 0.1);
       openLoginModal();
       return;
     }
 
+    const numericGrade = GRADE_NUMERIC_MAP[state.grade] || '0';
     const payload = {
       module_id: (state.moduleId || '').slice(0, 16), // nvarchar(16)
-      grade: state.grade, // nvarchar(1) (matches dbo.Final_Inspections.Grade)
-      result_code: state.grade, // backwards compatibility
+      grade: numericGrade, // 0 = A, 1 = B, 2 = Retest/Rework, 3 = Reject
+      result_code: numericGrade, // backwards compatibility
       tester_name: state.currentOperator.name || state.currentOperator.username || 'Inspector'
     };
 
@@ -1657,11 +1755,11 @@ function attachEventListeners() {
     })
       .then(res => res.json())
       .then(data => {
-        showToast(`Module ${state.moduleId} submitted as Grade [${state.grade}]!`, 'success');
+        showToast(`Module ${state.moduleId} submitted as Grade [${state.grade}] (Code: ${numericGrade})!`, 'success');
         soundFx.beep(950, 0.12);
         if (dom.pillDbStatus) {
           dom.pillDbStatus.className = 'status-indicator-pill status-live';
-          dom.pillDbStatus.innerHTML = `<span class="status-pip"></span><span>GRADE [${state.grade}] SAVED</span>`;
+          dom.pillDbStatus.innerHTML = `<span class="status-pip"></span><span>GRADE [${state.grade} / Code ${numericGrade}] SAVED</span>`;
           setTimeout(() => {
             dom.pillDbStatus.innerHTML = '<span class="status-pip"></span><span>DB LIVE</span>';
           }, 2500);
@@ -1724,7 +1822,116 @@ function attachEventListeners() {
       soundFx.beep(920, 0.12);
     }, 450);
   });
+
+  // View Mode Selector buttons
+  dom.viewBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      setViewMode(btn.dataset.view);
+    });
+  });
+
+  // Split Ratio preset buttons
+  dom.btnSplitRatios.forEach(btn => {
+    btn.addEventListener('click', () => {
+      setSplitRatio(btn.dataset.ratio);
+    });
+  });
+
+  // Toggle Telemetry Pane Collapse
+  if (dom.btnToggleTelemetryPane) {
+    dom.btnToggleTelemetryPane.addEventListener('click', () => {
+      if (dom.workbenchShell) {
+        dom.workbenchShell.classList.toggle('telemetry-collapsed');
+        const isCollapsed = dom.workbenchShell.classList.contains('telemetry-collapsed');
+        showToast(isCollapsed ? 'Telemetry tray collapsed' : 'Telemetry tray expanded', 'info');
+        setTimeout(() => {
+          window.dispatchEvent(new Event('resize'));
+        }, 100);
+      }
+    });
+  }
+}
+
+/**
+ * Change Console View Mode: 'visual' | 'split' | 'telemetry'
+ */
+function setViewMode(mode, showFeedback = true) {
+  if (!['visual', 'split', 'telemetry'].includes(mode)) mode = 'split';
+  state.viewMode = mode;
+  try {
+    localStorage.setItem('fvi_view_mode', mode);
+  } catch (e) { }
+
+  if (dom.workbenchShell) {
+    dom.workbenchShell.setAttribute('data-view', mode);
+  }
+
+  // Update button active state
+  if (dom.viewBtns) {
+    dom.viewBtns.forEach(btn => {
+      if (btn.dataset.view === mode) {
+        btn.classList.add('active');
+        btn.setAttribute('aria-checked', 'true');
+      } else {
+        btn.classList.remove('active');
+        btn.setAttribute('aria-checked', 'false');
+      }
+    });
+  }
+
+  // Load telemetry if active in current view
+  if (mode === 'split' || mode === 'telemetry') {
+    if (window.FVITelemetry && typeof window.FVITelemetry.loadTelemetryForModule === 'function') {
+      window.FVITelemetry.loadTelemetryForModule(state.moduleId);
+    }
+  }
+
+  // Trigger immediate and next-frame stage refits for instantaneous transition
+  fitInspectionStage();
+  requestAnimationFrame(() => {
+    fitInspectionStage();
+  });
+  setTimeout(() => {
+    fitInspectionStage();
+    window.dispatchEvent(new Event('resize'));
+  }, 100);
+
+  if (showFeedback) {
+    const modeLabels = {
+      'visual': 'Visual Inspection Focus',
+      'split': 'Unified 1-Screen Console (Both Pages)',
+      'telemetry': 'Electrical Metrology Focus'
+    };
+    showToast(`Switched to ${modeLabels[mode]}`, 'info');
+    soundFx.beep(650, 0.05);
+  }
+}
+
+/**
+ * Set Split Height Ratio in Unified Mode ('balanced' | 'visual-max' | 'metro-max')
+ */
+function setSplitRatio(ratio) {
+  if (!['balanced', 'visual-max', 'metro-max'].includes(ratio)) ratio = 'visual-max';
+  state.splitRatio = ratio;
+  try {
+    localStorage.setItem('fvi_split_ratio', ratio);
+  } catch (e) { }
+
+  if (dom.workbenchShell) {
+    dom.workbenchShell.setAttribute('data-split-ratio', ratio);
+  }
+  if (dom.btnSplitRatios) {
+    dom.btnSplitRatios.forEach(b => {
+      b.classList.toggle('active', b.dataset.ratio === ratio);
+    });
+  }
+  fitInspectionStage();
+  setTimeout(() => {
+    fitInspectionStage();
+    window.dispatchEvent(new Event('resize'));
+  }, 100);
 }
 
 // Kickoff
 document.addEventListener('DOMContentLoaded', initApp);
+

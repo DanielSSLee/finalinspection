@@ -38,6 +38,10 @@
   --grade-b-bg: rgba(245, 158, 11, 0.14);
   --grade-b-border: #d97706;
 
+  --grade-r: #f97316;
+  --grade-r-bg: rgba(249, 115, 22, 0.16);
+  --grade-r-border: #ea580c;
+
   --grade-x: #ef4444;
   --grade-x-bg: rgba(239, 68, 68, 0.14);
   --grade-x-border: #dc2626;
@@ -47,6 +51,8 @@
   --code-a-text: #34d399;
   --code-b-bg: rgba(245, 158, 11, 0.2);
   --code-b-text: #fbbf24;
+  --code-r-bg: rgba(249, 115, 22, 0.22);
+  --code-r-text: #fb923c;
   --code-c-bg: rgba(249, 115, 22, 0.2);
   --code-c-text: #fb923c;
   --code-x-bg: rgba(239, 68, 68, 0.2);
@@ -120,7 +126,9 @@ body {
 .workbench-shell {
   display: flex;
   flex-direction: column;
+  height: 100vh;
   min-height: 100vh;
+  overflow: hidden;
   width: 100%;
   background-color: var(--bg-canvas);
 }
@@ -306,6 +314,12 @@ h1,
   color: var(--code-b-text);
 }
 
+.grade-toggle.grade-r.active {
+  background-color: var(--grade-r-bg);
+  border-color: var(--grade-r-border);
+  color: var(--code-r-text);
+}
+
 .grade-toggle.grade-x.active {
   background-color: var(--grade-x-bg);
   border-color: var(--grade-x-border);
@@ -450,11 +464,12 @@ h1,
    Console Main Workspace: Asymmetric Two-Column Integrated Layout
    ========================================================================== */
 .console-workspace {
-  display: grid;
-  grid-template-columns: 340px 1fr;
+  display: flex;
+  flex-direction: row;
   flex: 1;
   width: 100%;
   overflow: hidden;
+  min-height: 0;
 }
 
 /* ==========================================================================
@@ -466,7 +481,10 @@ h1,
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  height: calc(100vh - 48px);
+  height: 100%;
+  min-height: 0;
+  width: 320px;
+  flex-shrink: 0;
 }
 
 .dock-block {
@@ -544,6 +562,12 @@ h1,
   background: var(--grade-b-bg);
   color: var(--code-b-text);
   border: 1px solid var(--grade-b-border);
+}
+
+.grade-tag-r {
+  background: var(--grade-r-bg);
+  color: var(--code-r-text);
+  border: 1px solid var(--grade-r-border);
 }
 
 .grade-tag-x {
@@ -734,7 +758,10 @@ h1,
   flex-direction: column;
   background-color: var(--bg-canvas);
   overflow: hidden;
-  height: calc(100vh - 48px);
+  height: 100%;
+  min-height: 0;
+  flex: 1;
+  min-width: 0;
 }
 
 /* Stage Toolbar */
@@ -843,10 +870,29 @@ h1,
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 8px 16px;
+  padding: 6px 14px;
   position: relative;
-  overflow: visible;
+  overflow: hidden;
+  align-items: center;
   justify-content: center;
+  min-height: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.stage-matrix-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  width: fit-content;
+  height: fit-content;
+  max-width: 100%;
+  max-height: 100%;
+  flex-shrink: 0;
+  margin: auto;
+  box-sizing: border-box;
 }
 
 /* X-Axis Header & Footer (1 to 24) */
@@ -856,11 +902,12 @@ h1,
   grid-template-columns: repeat(24, 1fr);
   padding-left: 28px;
   /* Offset for left Y-axis width */
-  height: 20px;
+  height: 18px;
   align-items: center;
   flex-shrink: 0;
   position: relative;
   z-index: 2;
+  box-sizing: border-box;
 }
 
 .axis-cell-x {
@@ -881,15 +928,17 @@ h1,
 /* Main Canvas Wrapper */
 .axis-and-image-container {
   display: flex;
+  flex-direction: row;
   position: relative;
-  width: 100%;
   z-index: 5;
+  align-items: flex-start;
+  width: fit-content;
+  height: fit-content;
+  box-sizing: border-box;
 }
 
 .axis-header-y {
   width: 28px;
-  height: 97.491%;
-  /* Matches active cell area down to pixel 544 */
   display: grid;
   grid-template-rows: repeat(6, 1fr);
   align-items: center;
@@ -897,6 +946,7 @@ h1,
   flex-shrink: 0;
   position: relative;
   z-index: 2;
+  box-sizing: border-box;
 }
 
 .axis-cell-y {
@@ -916,19 +966,18 @@ h1,
 /* Calibrated Camera Stage (1024 x 558 exact ratio) */
 .image-stage {
   position: relative;
-  flex: 1;
-  width: 100%;
   aspect-ratio: 1024 / 558;
   overflow: visible;
   cursor: crosshair;
   z-index: 10;
+  box-sizing: border-box;
 }
 
 .el-display-img {
-  width: 100%;
-  height: 100%;
-  object-fit: fill;
-  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: fill !important;
+  display: block !important;
   user-select: none;
   pointer-events: none;
   transition: filter var(--transition-fast);
@@ -1871,6 +1920,27 @@ kbd {
   color: #f87171;
 }
 
+.login-logout-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background-color: rgba(245, 158, 11, 0.09);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: var(--radius-xs);
+  padding: 10px 12px;
+  margin-top: 12px;
+  margin-bottom: 14px;
+  color: #fbbf24;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.login-logout-notice svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: #f59e0b;
+}
+
 .login-actions {
   display: flex;
   justify-content: flex-end;
@@ -1935,4 +2005,361 @@ kbd {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+}
+
+/* ==========================================================================
+   Workstation View Mode Switcher (Visual • Unified 1-Screen • Metrology)
+   ========================================================================== */
+.view-mode-segment {
+  display: flex;
+  align-items: center;
+}
+
+.view-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  gap: 2px;
+}
+
+.view-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 4px 10px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.view-mode-btn svg {
+  flex-shrink: 0;
+}
+
+.view-mode-btn:hover {
+  color: var(--text-bright);
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.view-mode-btn.active {
+  background: linear-gradient(135deg, rgba(2, 132, 199, 0.4), rgba(56, 189, 248, 0.25));
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.2);
+}
+
+/* ==========================================================================
+   Unified 1-Screen / Split View Layout Engine
+   ========================================================================== */
+.unified-telemetry-container {
+  display: flex;
+  flex-direction: column;
+  background-color: #090e18;
+  border-top: 1px solid var(--border-medium);
+  overflow: hidden;
+  position: relative;
+  transition: flex 0.25s cubic-bezier(0.16, 1, 0.3, 1), height 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 1. Visual Only Mode (Edge-to-edge full screen visual inspection, zero empty space) */
+.workbench-shell[data-view="visual"] {
+  height: 100vh;
+  overflow: hidden;
+}
+
+.workbench-shell[data-view="visual"] .console-workspace {
+  flex: 1 1 0%;
+  height: calc(100vh - 48px);
+  min-height: 0;
+  max-height: calc(100vh - 48px);
+  display: flex;
+  overflow: hidden;
+  border-bottom: none;
+}
+
+.workbench-shell[data-view="visual"] .stage-section {
+  height: 100%;
+  min-height: 0;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.workbench-shell[data-view="visual"] .inspection-frame {
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.workbench-shell[data-view="visual"] .sidebar-dock {
+  height: 100%;
+  min-height: 0;
+  width: 320px;
+  flex-shrink: 0;
+}
+
+.workbench-shell[data-view="visual"] .unified-telemetry-container {
+  display: none !important;
+}
+
+/* 2. Metrology Only Mode */
+.workbench-shell[data-view="telemetry"] .console-workspace {
+  display: none !important;
+}
+.workbench-shell[data-view="telemetry"] .unified-telemetry-container {
+  display: flex !important;
+  flex: 1;
+  height: calc(100vh - 48px);
+  border-top: none;
+}
+.workbench-shell[data-view="telemetry"] .split-divider-bar {
+  display: none;
+}
+.workbench-shell[data-view="telemetry"] .telemetry-viewport {
+  height: 100%;
+}
+
+/* 3. Unified Split Mode (Both in 1 Screen) */
+.workbench-shell[data-view="split"] {
+  height: 100vh;
+  overflow: hidden;
+}
+
+.workbench-shell[data-view="split"] .console-workspace {
+  flex: 0 0 calc(58vh - 24px);
+  min-height: 280px;
+  max-height: 75vh;
+  display: flex;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border-medium);
+}
+
+.workbench-shell[data-view="split"] .stage-section {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+
+.workbench-shell[data-view="split"] .inspection-frame {
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+}
+
+.workbench-shell[data-view="split"] .unified-telemetry-container {
+  display: flex !important;
+  flex: 1;
+  min-height: 180px;
+  overflow: hidden;
+}
+
+.workbench-shell[data-view="split"] .telemetry-viewport {
+  overflow-y: auto;
+  padding: 10px 14px;
+  gap: 10px;
+}
+
+.workbench-shell[data-view="split"] .chart-viewport-wrap {
+  height: 250px;
+}
+
+.workbench-shell[data-view="split"] .kpi-card {
+  padding: 7px 10px;
+}
+
+.workbench-shell[data-view="split"] .pipeline-card {
+  padding: 6px 10px;
+}
+
+/* Ratio presets */
+.workbench-shell[data-view="split"][data-split-ratio="balanced"] .console-workspace {
+  flex: 0 0 calc(52vh - 24px);
+}
+.workbench-shell[data-view="split"][data-split-ratio="balanced"] .inspection-frame {
+  max-height: none;
+}
+
+.workbench-shell[data-view="split"][data-split-ratio="visual-max"] .console-workspace {
+  flex: 0 0 calc(65vh - 24px);
+}
+.workbench-shell[data-view="split"][data-split-ratio="visual-max"] .inspection-frame {
+  max-height: none;
+}
+
+.workbench-shell[data-view="split"][data-split-ratio="metro-max"] .console-workspace {
+  flex: 0 0 calc(40vh - 24px);
+}
+.workbench-shell[data-view="split"][data-split-ratio="metro-max"] .inspection-frame {
+  max-height: none;
+}
+
+/* Collapsed Telemetry state */
+.workbench-shell[data-view="split"].telemetry-collapsed .console-workspace {
+  flex: 1 !important;
+  max-height: none !important;
+}
+.workbench-shell[data-view="split"].telemetry-collapsed .inspection-frame {
+  max-height: none !important;
+  height: 100% !important;
+}
+.workbench-shell[data-view="split"].telemetry-collapsed .unified-telemetry-container {
+  flex: 0 0 34px !important;
+  min-height: 34px !important;
+}
+.workbench-shell[data-view="split"].telemetry-collapsed .telemetry-viewport,
+.workbench-shell[data-view="split"].telemetry-collapsed .telemetry-footer {
+  display: none !important;
+}
+
+/* Split Bar Divider */
+.split-divider-bar {
+  height: 34px;
+  background-color: #0b1322;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  gap: 12px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.split-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.split-pip {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--accent-cyan);
+  box-shadow: 0 0 8px var(--accent-cyan);
+}
+
+.split-title {
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-bright);
+}
+
+.split-badge {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: var(--accent-gold);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: var(--radius-xs);
+}
+
+.split-bar-center {
+  display: flex;
+  align-items: center;
+}
+
+.split-ratio-selector {
+  display: inline-flex;
+  align-items: center;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  padding: 1px;
+  gap: 1px;
+}
+
+.btn-split-ratio {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.btn-split-ratio:hover {
+  color: var(--text-bright);
+}
+
+.btn-split-ratio.active {
+  background-color: var(--accent-blue);
+  color: #ffffff;
+}
+
+.split-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.split-hotkey-hint {
+  color: var(--text-dim);
+  font-size: 0.68rem;
+  font-family: var(--font-sans);
+}
+
+.split-hotkey-hint kbd {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-medium);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-family: var(--font-mono);
+  color: var(--text-main);
+  font-size: 0.65rem;
+}
+
+.btn-split-collapse {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-medium);
+  color: var(--text-muted);
+  border-radius: var(--radius-xs);
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-split-collapse:hover {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}
+
+.chevron-split {
+  transition: transform 0.2s ease;
+}
+
+.telemetry-collapsed .chevron-split {
+  transform: rotate(180deg);
 }
