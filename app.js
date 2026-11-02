@@ -24,7 +24,9 @@ if (typeof window !== "undefined" && window.location.protocol === "file:" && !co
 // Application State
 const state = {
   moduleId: 'USM0112208260078', // 16-char photovoltaic module serial number (VARCHAR(16))
-  grade: null, // null | 'A' | 'B' | 'X' (No grade selected initially)
+  grade: null, // null | 'A' | 'B' | 'R' | 'X' (No grade selected initially)
+  currentSide: 'front', // 'front' | 'back'
+  allowedGrades: ['A', 'B', 'R', 'X'], // Dynamically computed based on logged defect criteria
   defects: new Map(), // key: 'C8', value: defect object
   activeCell: null, // { coord: 'C8', row: 'C', col: 8 }
   selectedDefectCode: null,
@@ -46,26 +48,95 @@ const state = {
 const GRID_ROWS = ['A', 'B', 'C', 'D', 'E', 'F']; // 6 Rows
 const GRID_COLS = Array.from({ length: 24 }, (_, i) => i + 1); // 1 to 24 (24 Columns)
 
-// Defect Catalog with IEC Classifications & int2 Defect Types
+/**
+ * Production Defect Catalog (55 Standard Plant Presets)
+ * Categorization & Side Applicability:
+ *  - side: 'front' (Red / Front inspection)
+ *  - side: 'back'  (Blue / Back inspection: Backsheet, Junction Box)
+ *  - side: 'both'  (Green / Both sides: EVA)
+ * Grade Options:
+ *  - 'A,B,R' -> Grade A, Grade B, Reject ('X')
+ *  - 'A,R'   -> Grade A, Reject ('X')
+ *  - 'A,B'   -> Grade A, Grade B
+ *  - 'B,R'   -> Grade B, Reject ('X')
+ *  - 'RW'    -> Retest/Rework ('R')
+ *  - 'A,R,RW'-> Grade A, Reject ('X'), Retest/Rework ('R')
+ *  - 'RT'    -> Retest/Rework ('R'), Reject ('X')
+ *  - 'RW, RT'-> Retest/Rework ('R'), Reject ('X')
+ */
 const DEFECT_CATALOG = {
-  'A1': { typeId: 1, name: 'Micro-Crack (Hairline)', severity: 'Minor', defaultGrade: 'A', key: '1' },
-  'A2': { typeId: 2, name: 'Cross-Crack / Star Crack', severity: 'Moderate', defaultGrade: 'B', key: '2' },
-  'B1': { typeId: 3, name: 'Dead Finger / Inactive Area', severity: 'Moderate', defaultGrade: 'B', key: '3' },
-  'B2': { typeId: 4, name: 'Solder Disconnect / Void', severity: 'Moderate', defaultGrade: 'B', key: '4' },
-  'C1': { typeId: 5, name: 'Dark Cell / Low Shunt', severity: 'Severe', defaultGrade: 'B', key: '5' },
-  'X1': { typeId: 6, name: 'Broken Cell / Corner V-Crack', severity: 'Critical', defaultGrade: 'X', key: '6' },
-  'X2': { typeId: 7, name: 'Severe Hotspot / Solder Bead', severity: 'Critical', defaultGrade: 'X', key: '7' },
-  'X3': { typeId: 8, name: 'Delamination / Foreign Mat.', severity: 'Critical', defaultGrade: 'X', key: '8' }
-};
+  // === GLASS (Front Side / Red) ===
+  'G1': { code: 'G1', name: 'Glass Surface Appearance', category: 'Glass', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'G2': { code: 'G2', name: 'Glass Scratch', category: 'Glass', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'G3': { code: 'G3', name: 'Glass Bubbles', category: 'Glass', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
 
-const DEFECT_CODE_TO_ID = {
-  'A1': 1, 'A2': 2, 'B1': 3, 'B2': 4,
-  'C1': 5, 'X1': 6, 'X2': 7, 'X3': 8
-};
+  // === FRAME (Front Side / Red) ===
+  'F1': { code: 'F1', name: 'Frame Scratches', category: 'Frame', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'F2': { code: 'F2', name: 'Frame Dents (Concave) & Bumps (Convex)', category: 'Frame', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'F5': { code: 'F5', name: 'Frame Burrs', category: 'Frame', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'F6': { code: 'F6', name: 'Frame Seam Gap and Misalignment', category: 'Frame', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'F7': { code: 'F7', name: 'Frame sealant defects (front & back)', category: 'Frame', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'F8': { code: 'F8', name: 'Ground Mark', category: 'Frame', side: 'front', rawGrades: 'A,R', allowedGrades: ['A', 'X'] },
 
-const DEFECT_ID_TO_CODE = {
-  1: 'A1', 2: 'A2', 3: 'B1', 4: 'B2',
-  5: 'C1', 6: 'X1', 7: 'X2', 8: 'X3'
+  // === CELL (Front Side / Red) ===
+  'C1': { code: 'C1', name: 'Cell Type Mixing', category: 'Cell', side: 'front', rawGrades: 'A,R', allowedGrades: ['A', 'X'] },
+  'C2': { code: 'C2', name: 'Cell Color Difference (post-lam)', category: 'Cell', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'C5': { code: 'C5', name: 'Cell Spots', category: 'Cell', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'C6': { code: 'C6', name: 'Cell Edge and Corner Chip', category: 'Cell', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'C7': { code: 'C7', name: 'Cell Crack Separation', category: 'Cell', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'C8': { code: 'C8', name: 'Cell Scratch', category: 'Cell', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'C9': { code: 'C9', name: 'Water Ripple and Dirt', category: 'Cell', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'C10': { code: 'C10', name: 'Broken Grid', category: 'Cell', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'C11': { code: 'C11', name: 'Grid Line Thickness', category: 'Cell', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+
+  // === EVA (Both Sides / Green) ===
+  'E1': { code: 'E1', name: 'EVA Voids or Bubbles', category: 'EVA', side: 'both', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'E2': { code: 'E2', name: 'EVA Unmelted Wrinkles', category: 'EVA', side: 'both', rawGrades: 'A,B', allowedGrades: ['A', 'B'] },
+  'E3': { code: 'E3', name: 'EVA Discoloration/ Dirtiness', category: 'EVA', side: 'both', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'E4': { code: 'E4', name: 'Missing or Incomplete EVA', category: 'EVA', side: 'both', rawGrades: 'B,R', allowedGrades: ['B', 'X'] },
+  'E5': { code: 'E5', name: 'EVA Line Marks, Faults', category: 'EVA', side: 'both', rawGrades: 'A,B', allowedGrades: ['A', 'B'] },
+  'E6': { code: 'E6', name: 'Foreign Material', category: 'EVA', side: 'both', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'E7': { code: 'E7', name: 'Overflowing White EVA', category: 'EVA', side: 'both', rawGrades: 'RW', allowedGrades: ['R'] },
+
+  // === BACKSHEET (Back Side / Blue) ===
+  'B1': { code: 'B1', name: 'Bulging, Delamination', category: 'Backsheet', side: 'back', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'B2': { code: 'B2', name: 'Drums', category: 'Backsheet', side: 'back', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'B3': { code: 'B3', name: 'Scratch', category: 'Backsheet', side: 'back', rawGrades: 'A,B', allowedGrades: ['A', 'B'] },
+  'B4': { code: 'B4', name: 'Fold', category: 'Backsheet', side: 'back', rawGrades: 'A,B', allowedGrades: ['A', 'B'] },
+  'B5': { code: 'B5', name: 'Pits, Indentation', category: 'Backsheet', side: 'back', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'B6': { code: 'B6', name: 'Backsheet Mark', category: 'Backsheet', side: 'back', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'B7': { code: 'B7', name: 'Backsheet Crystal Point', category: 'Backsheet', side: 'back', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'B8': { code: 'B8', name: 'Backsheet Drawing', category: 'Backsheet', side: 'back', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'B9': { code: 'B9', name: 'Black Spots', category: 'Backsheet', side: 'back', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+
+  // === JUNCTION BOX (Back Side / Blue) ===
+  'J1': { code: 'J1', name: 'J-Box Body/ Mi', category: 'Junction Box', side: 'back', rawGrades: 'A,R,RW', allowedGrades: ['A', 'R', 'X'] },
+  'J2': { code: 'J2', name: 'J-Box Installation', category: 'Junction Box', side: 'back', rawGrades: 'A,R,RW', allowedGrades: ['A', 'R', 'X'] },
+  'J3': { code: 'J3', name: 'Wires & Connectors', category: 'Junction Box', side: 'back', rawGrades: 'A,R,RW', allowedGrades: ['A', 'R', 'X'] },
+  'J4': { code: 'J4', name: 'Connection Inside the J-box', category: 'Junction Box', side: 'back', rawGrades: 'A,R,RW', allowedGrades: ['A', 'R', 'X'] },
+  'J5': { code: 'J5', name: 'Potting', category: 'Junction Box', side: 'back', rawGrades: 'A,R,RW', allowedGrades: ['A', 'R', 'X'] },
+
+  // === SOLDERING COMPONENTS (Front Side / Red) ===
+  'S1': { code: 'S1', name: 'Offset Soldering', category: 'Soldering components', side: 'front', rawGrades: 'A,R', allowedGrades: ['A', 'X'] },
+  'S2': { code: 'S2', name: 'Solder Scar', category: 'Soldering components', side: 'front', rawGrades: 'A,R', allowedGrades: ['A', 'X'] },
+  'S3': { code: 'S3', name: 'Busbar Soldering', category: 'Soldering components', side: 'front', rawGrades: 'A,R,RW', allowedGrades: ['A', 'R', 'X'] },
+
+  // === MODULE DIMENSION & APPEARANCE (Front Side / Red) ===
+  'D2': { code: 'D2', name: 'Cell Array', category: 'Module Dimension & Appearance', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'D3': { code: 'D3', name: 'Cell Chamfer Direction', category: 'Module Dimension & Appearance', side: 'front', rawGrades: 'A,R', allowedGrades: ['A', 'X'] },
+  'D4': { code: 'D4', name: 'Overall Displacement', category: 'Module Dimension & Appearance', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'D5': { code: 'D5', name: 'Busbar Lap', category: 'Module Dimension & Appearance', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'D6': { code: 'D6', name: 'Module Dimensions', category: 'Module Dimension & Appearance', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'D7': { code: 'D7', name: 'Glazed Previous to Light', category: 'Module Dimension & Appearance', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'D8': { code: 'D8', name: 'Missing Grid Print', category: 'Module Dimension & Appearance', side: 'front', rawGrades: 'A,B,R', allowedGrades: ['A', 'B', 'X'] },
+  'D9': { code: 'D9', name: 'Module Barcode', category: 'Module Dimension & Appearance', side: 'front', rawGrades: 'A,R,RW', allowedGrades: ['A', 'R', 'X'] },
+  'D10': { code: 'D10', name: 'Module Nameplate', category: 'Module Dimension & Appearance', side: 'front', rawGrades: 'A,R,RW', allowedGrades: ['A', 'R', 'X'] },
+
+  // === OTHER (Front Side / Red) ===
+  'O1': { code: 'O1', name: 'No EL data', category: 'Other', side: 'front', rawGrades: 'RT', allowedGrades: ['R', 'X'] },
+  'O2': { code: 'O2', name: 'No Power', category: 'Other', side: 'front', rawGrades: 'RT', allowedGrades: ['R', 'X'] },
+  'O3': { code: 'O3', name: 'Low Power', category: 'Other', side: 'front', rawGrades: 'RW, RT', allowedGrades: ['R', 'X'] },
+  'O4': { code: 'O4', name: 'High Power', category: 'Other', side: 'front', rawGrades: 'RT', allowedGrades: ['R', 'X'] }
 };
 
 // Tactical Metrology Audio Feedback Synthesizer
@@ -138,6 +209,21 @@ const dom = {
   selectElSample: document.getElementById('select-el-sample'),
   inputCustomImage: document.getElementById('input-custom-image'),
   btnClearHistory: document.getElementById('btn-clear-history'),
+
+  // Front / Back Side Switcher & Badges
+  btnSideFront: document.getElementById('btn-side-front'),
+  btnSideBack: document.getElementById('btn-side-back'),
+  stageSideBadge: document.getElementById('stage-side-badge'),
+  stageSideBadgeText: document.getElementById('stage-side-badge-text'),
+  bubbleSideBadge: document.getElementById('bubble-side-badge'),
+  bubbleSearchInput: document.getElementById('bubble-search-input'),
+  btnClearSearch: document.getElementById('btn-clear-search'),
+  bubbleCategoryTabs: document.getElementById('bubble-category-tabs'),
+  bubbleHoverInfo: document.getElementById('bubble-hover-info'),
+  hoverInfoTitle: document.getElementById('hover-info-title'),
+  hoverInfoSide: document.getElementById('hover-info-side'),
+  hoverGradesVal: document.getElementById('hover-grades-val'),
+  gradeRestrictionsHint: document.getElementById('grade-restrictions-hint'),
 
   // Comic Bubble Popover Elements
   cellComicBubble: document.getElementById('cell-comic-bubble'),
@@ -241,8 +327,12 @@ function initApp() {
 
   // Start with clean grid ready for inspection and no grade selected
   resetGrade();
+  recomputeAllowedGrades();
   updateSummaryAndHistory();
   renderDefectPins();
+
+  // Load initial EL image for front side
+  loadInspectionImage(state.moduleId, 'front');
 
   // Initialize View Mode (defaults to 'split' Unified 1-screen console)
   const urlParams = new URLSearchParams(window.location.search);
@@ -400,6 +490,79 @@ function initConveyorEventStream() {
 }
 
 /**
+ * Load Inspection Image for current module and side (Front or Back)
+ */
+function loadInspectionImage(panelId = state.moduleId, side = state.currentSide, onSuccess = null) {
+  const elImageUrl = `${config.apiBaseUrl}/api/module/${panelId}/el-image?side=${side}`;
+  const sampleMap = {
+    'USM0112208260078': 'solar_el_sample.jpg',
+    'USM0111208260304': 'solar_el_sample.jpg',
+    'USM0111208260302': 'sample_el_2.jpg',
+    'USM0111208260208': 'sample_el_3.jpg',
+    'USM0111208260303': 'sample_el_4.jpg'
+  };
+
+  const tempImg = new Image();
+  tempImg.onload = () => {
+    dom.elImage.src = elImageUrl;
+    if (typeof onSuccess === 'function') onSuccess();
+  };
+  tempImg.onerror = () => {
+    if (side === 'back') {
+      dom.elImage.src = 'sample_el_back.jpg';
+    } else {
+      dom.elImage.src = sampleMap[panelId] || 'solar_el_sample.jpg';
+    }
+    if (typeof onSuccess === 'function') onSuccess();
+  };
+  tempImg.src = elImageUrl;
+}
+
+/**
+ * Switch Inspection Viewport Side (Front Side <-> Back Side)
+ */
+function toggleInspectionSide(targetSide) {
+  const nextSide = targetSide || (state.currentSide === 'front' ? 'back' : 'front');
+  state.currentSide = nextSide;
+
+  // 1. Update Switcher Buttons
+  if (dom.btnSideFront && dom.btnSideBack) {
+    dom.btnSideFront.classList.toggle('active', nextSide === 'front');
+    dom.btnSideBack.classList.toggle('active', nextSide === 'back');
+  }
+
+  // 2. Update Stage Floating Badge
+  if (dom.stageSideBadge) {
+    dom.stageSideBadge.className = `stage-side-badge ${nextSide}`;
+    if (dom.stageSideBadgeText) {
+      dom.stageSideBadgeText.textContent = nextSide === 'front' ? 'FRONT SIDE (CELLS)' : 'BACK SIDE (BACKSHEET & J-BOX)';
+    }
+  }
+
+  // 3. Update Bubble Side Badge
+  if (dom.bubbleSideBadge) {
+    dom.bubbleSideBadge.className = `bubble-side-badge ${nextSide}`;
+    dom.bubbleSideBadge.textContent = nextSide === 'front' ? 'FRONT SIDE' : 'BACK SIDE';
+  }
+
+  // 4. Load the appropriate image
+  loadInspectionImage(state.moduleId, nextSide);
+
+  // 5. Update Defect Pins for the active side
+  renderDefectPins();
+
+  // 6. If defect selection bubble is open, refresh reasons list for this side
+  if (dom.cellComicBubble && dom.cellComicBubble.style.display === 'flex') {
+    renderCategoryTabs();
+    renderDefectReasonItems();
+  }
+
+  const sideLabel = nextSide === 'front' ? 'Front Side (Cells/Glass)' : 'Back Side (Backsheet/J-Box)';
+  showToast(`Switched view to ${sideLabel}`, 'info');
+  soundFx.beep(nextSide === 'front' ? 740 : 620, 0.07);
+}
+
+/**
  * Handle Arrival of New Module from Conveyor
  * Automatically fetches the corresponding EL image from FTP and updates UI
  */
@@ -419,32 +582,25 @@ function handleNewConveyorModule(panelId, source = 'Conveyor Sensor') {
   // Clear defects and reset grade for fresh inspection of the new module
   state.defects.clear();
   resetGrade();
+  recomputeAllowedGrades();
   updateSummaryAndHistory();
   renderDefectPins();
   closeComicBubble();
 
-  // Load image: tries backend FTP fetcher first, falls back to local sample
-  const elImageUrl = `${config.apiBaseUrl}/api/module/${panelId}/el-image`;
+  // Reset side to front for new panel
+  state.currentSide = 'front';
+  if (dom.btnSideFront && dom.btnSideBack) {
+    dom.btnSideFront.classList.add('active');
+    dom.btnSideBack.classList.remove('active');
+  }
+  if (dom.stageSideBadge) {
+    dom.stageSideBadge.className = 'stage-side-badge front';
+    if (dom.stageSideBadgeText) dom.stageSideBadgeText.textContent = 'FRONT SIDE (CELLS)';
+  }
 
-  // Test image availability
-  const tempImg = new Image();
-  tempImg.onload = () => {
-    dom.elImage.src = elImageUrl;
+  loadInspectionImage(panelId, 'front', () => {
     showToast(`Conveyor MQTT: Loaded ${panelId} (${source})`, 'success');
-  };
-  tempImg.onerror = () => {
-    // Fallback mapping for testing samples
-    const sampleMap = {
-      'USM0112208260078': 'solar_el_sample.jpg',
-      'USM0111208260304': 'solar_el_sample.jpg',
-      'USM0111208260302': 'sample_el_2.jpg',
-      'USM0111208260208': 'sample_el_3.jpg',
-      'USM0111208260303': 'sample_el_4.jpg'
-    };
-    dom.elImage.src = sampleMap[panelId] || 'solar_el_sample.jpg';
-    showToast(`Conveyor MQTT: Detected ${panelId}`, 'info');
-  };
-  tempImg.src = elImageUrl;
+  });
 
   soundFx.beep(850, 0.1);
 }
@@ -582,9 +738,13 @@ function updateDefectPin(coord) {
     const defect = state.defects.get(coord);
     const marker = document.createElement('span');
     const prefix = defect.defectCode.charAt(0).toLowerCase();
-    marker.className = `defect-marker marker-${prefix}`;
+    const isCurrentSide = !defect.side || defect.side === state.currentSide || defect.side === 'both';
+    const sideClass = (defect.side || 'front').toLowerCase();
+
+    marker.className = `defect-marker marker-${prefix} marker-side-${sideClass} ${isCurrentSide ? '' : 'marker-other-side'}`;
     marker.textContent = defect.defectCode;
-    marker.title = `${coord}: ${defect.defectName}`;
+    const sideText = sideClass === 'back' ? 'BACK' : 'FRONT';
+    marker.title = `${coord}: [${defect.defectCode}] ${defect.defectName} (${sideText} SIDE)`;
     slot.appendChild(marker);
   }
 }
@@ -598,16 +758,173 @@ function renderDefectPins() {
   });
 }
 
+// Speech Bubble Filter State
+let currentBubbleCategory = 'ALL';
+let bubbleSearchQuery = '';
+
+/**
+ * Render Category Tabs inside Defect Speech Bubble
+ */
+function renderCategoryTabs() {
+  if (!dom.bubbleCategoryTabs) return;
+  dom.bubbleCategoryTabs.innerHTML = '';
+
+  const activeSide = state.currentSide; // 'front' | 'back'
+  const relevantCategories = new Set();
+  relevantCategories.add('ALL');
+
+  Object.values(DEFECT_CATALOG).forEach(defect => {
+    if (activeSide === 'front' && (defect.side === 'front' || defect.side === 'both')) {
+      relevantCategories.add(defect.category);
+    } else if (activeSide === 'back' && (defect.side === 'back' || defect.side === 'both')) {
+      relevantCategories.add(defect.category);
+    }
+  });
+  relevantCategories.add('ALL SIDES');
+
+  relevantCategories.forEach(cat => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `bubble-cat-btn ${cat === currentBubbleCategory ? 'active' : ''}`;
+    btn.textContent = cat === 'Module Dimension & Appearance' ? 'Dimensions' : cat;
+    btn.title = `Filter defects by ${cat}`;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      currentBubbleCategory = cat;
+      dom.bubbleCategoryTabs.querySelectorAll('.bubble-cat-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderDefectReasonItems();
+    });
+    dom.bubbleCategoryTabs.appendChild(btn);
+  });
+}
+
+/**
+ * Render Filtered List of Defect Reasons inside Speech Bubble
+ */
+function renderDefectReasonItems() {
+  if (!dom.bubbleReasonsList) return;
+  dom.bubbleReasonsList.innerHTML = '';
+
+  const activeSide = state.currentSide; // 'front' | 'back'
+  const query = (bubbleSearchQuery || '').toLowerCase().trim();
+
+  const matchingDefects = Object.values(DEFECT_CATALOG).filter(defect => {
+    // 1. Text Search Filter across code, name, category, or allowed options
+    if (query) {
+      const matchCode = defect.code.toLowerCase().includes(query);
+      const matchName = defect.name.toLowerCase().includes(query);
+      const matchCat = defect.category.toLowerCase().includes(query);
+      const matchGrades = (defect.rawGrades || '').toLowerCase().includes(query);
+      if (!matchCode && !matchName && !matchCat && !matchGrades) return false;
+      return true; // Search query searches across all defects
+    }
+
+    // 2. Category Tab Filter
+    if (currentBubbleCategory === 'ALL SIDES') {
+      return true;
+    }
+    if (currentBubbleCategory !== 'ALL' && defect.category !== currentBubbleCategory) {
+      return false;
+    }
+
+    // 3. Inspection Viewport Side Filter
+    if (activeSide === 'front') {
+      return defect.side === 'front' || defect.side === 'both';
+    } else {
+      return defect.side === 'back' || defect.side === 'both';
+    }
+  });
+
+  if (matchingDefects.length === 0) {
+    const emptyDiv = document.createElement('div');
+    emptyDiv.style.cssText = 'padding: 14px; text-align: center; color: var(--text-dim); font-size: 0.75rem;';
+    emptyDiv.textContent = 'No defects found. Try another search or category.';
+    dom.bubbleReasonsList.appendChild(emptyDiv);
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+  matchingDefects.forEach(defect => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `bubble-reason-item side-${defect.side} ${state.selectedDefectCode === defect.code ? 'selected' : ''}`;
+    btn.dataset.code = defect.code;
+    btn.dataset.side = defect.side;
+
+    btn.innerHTML = `
+      <span class="reason-code">${defect.code}</span>
+      <span class="reason-label" title="${defect.name}">${defect.name}</span>
+      <span class="reason-grade-pill" title="Permitted Grades: ${defect.rawGrades}">${defect.rawGrades}</span>
+    `;
+
+    // Tooltip / Detail Preview on Hover
+    btn.addEventListener('mouseenter', () => {
+      showDefectHoverPreview(defect);
+    });
+
+    // Selection on Click
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.selectedDefectCode = defect.code;
+      dom.bubbleReasonsList.querySelectorAll('.bubble-reason-item').forEach(i => i.classList.remove('selected'));
+      btn.classList.add('selected');
+      setBubbleConfirmState(true);
+      showDefectHoverPreview(defect);
+      soundFx.beep(640, 0.04);
+    });
+
+    frag.appendChild(btn);
+  });
+
+  dom.bubbleReasonsList.appendChild(frag);
+}
+
+/**
+ * Show Detailed Defect Preview Card (Category, Side, Allowed Grades)
+ */
+function showDefectHoverPreview(defect) {
+  if (!dom.bubbleHoverInfo) return;
+  dom.bubbleHoverInfo.style.display = 'flex';
+  if (dom.hoverInfoTitle) dom.hoverInfoTitle.textContent = `${defect.code} • ${defect.name}`;
+  if (dom.hoverInfoSide) {
+    const sideName = defect.side === 'front' ? 'Front Side' : (defect.side === 'back' ? 'Back Side' : 'Front & Back');
+    dom.hoverInfoSide.textContent = `${defect.category} (${sideName})`;
+  }
+  if (dom.hoverGradesVal) {
+    const gradeNames = (defect.allowedGrades || []).map(g => {
+      if (g === 'A') return 'A Prime';
+      if (g === 'B') return 'B Secondary';
+      if (g === 'R') return 'Retest/Rework';
+      if (g === 'X') return 'Reject';
+      return g;
+    }).join(', ');
+    dom.hoverGradesVal.textContent = `${defect.rawGrades} [${gradeNames}]`;
+  }
+}
+
 /**
  * Open Comic Speech Bubble Popover Next to Clicked Cell
  */
 function openComicBubble(coord, row, col) {
   state.activeCell = { coord, row, col };
   state.selectedDefectCode = null;
+  currentBubbleCategory = 'ALL';
+  bubbleSearchQuery = '';
+
+  if (dom.bubbleSearchInput) dom.bubbleSearchInput.value = '';
+  if (dom.btnClearSearch) dom.btnClearSearch.style.display = 'none';
+  if (dom.bubbleHoverInfo) dom.bubbleHoverInfo.style.display = 'none';
+
   soundFx.beep(750, 0.05);
 
   dom.bubbleCellCoord.textContent = `CELL ${row}-${col < 10 ? '0' + col : col} (${coord})`;
+  if (dom.bubbleSideBadge) {
+    dom.bubbleSideBadge.className = `bubble-side-badge ${state.currentSide}`;
+    dom.bubbleSideBadge.textContent = state.currentSide === 'front' ? 'FRONT SIDE' : 'BACK SIDE';
+  }
 
+  // Active cell highlighting on matrix
   if (activeSelectedCellEl) {
     activeSelectedCellEl.classList.remove('active-selected');
     activeSelectedCellEl = null;
@@ -626,7 +943,7 @@ function openComicBubble(coord, row, col) {
   const cellWidth = cellRect.width;
   const cellHeight = cellRect.height;
 
-  const bubbleWidth = 250;
+  const bubbleWidth = 320;
   let bubbleLeft = 0;
 
   if (col <= 12) {
@@ -642,22 +959,33 @@ function openComicBubble(coord, row, col) {
   // Horizontal clamp: Ensure bubble stays cleanly inside stage boundaries
   bubbleLeft = Math.max(8, Math.min(bubbleLeft, stageRect.width - bubbleWidth - 8));
 
-  let bubbleTop = cellTop + (cellHeight / 2) - 130;
-  const maxTop = Math.max(8, stageRect.height - 310);
+  let bubbleTop = cellTop + (cellHeight / 2) - 150;
+  const maxTop = Math.max(8, stageRect.height - 390);
   bubbleTop = Math.max(8, Math.min(bubbleTop, maxTop));
 
   dom.cellComicBubble.style.left = `${Math.round(bubbleLeft)}px`;
   dom.cellComicBubble.style.top = `${Math.round(bubbleTop)}px`;
 
-  dom.bubbleReasonItems.forEach(item => item.classList.remove('selected'));
+  // Render Category Tabs & Preset Defect Items
+  renderCategoryTabs();
+  renderDefectReasonItems();
+
   setBubbleConfirmState(false);
 
+  // If cell already has a logged defect, pre-select it
   if (state.defects.has(coord)) {
     const existing = state.defects.get(coord);
     state.selectedDefectCode = existing.defectCode;
 
-    const matchingItem = Array.from(dom.bubbleReasonItems).find(i => i.dataset.code === existing.defectCode);
-    if (matchingItem) matchingItem.classList.add('selected');
+    const catEntry = DEFECT_CATALOG[existing.defectCode];
+    if (catEntry) {
+      showDefectHoverPreview(catEntry);
+    }
+    const matchingBtn = dom.bubbleReasonsList.querySelector(`[data-code="${existing.defectCode}"]`);
+    if (matchingBtn) {
+      matchingBtn.classList.add('selected');
+      matchingBtn.scrollIntoView({ block: 'nearest' });
+    }
 
     dom.bubbleNotesInput.value = existing.notes || '';
     dom.btnBubbleDelete.style.display = 'inline-block';
@@ -701,35 +1029,35 @@ function closeComicBubble() {
  */
 function setDefect(coord, row, col, defectCode, notes = '', notify = true, syncToDatabase = true) {
   const catalogEntry = DEFECT_CATALOG[defectCode] || {
-    typeId: 1,
+    code: defectCode,
     name: 'Observed Anomaly',
-    severity: 'Moderate',
-    defaultGrade: 'B'
+    category: 'Visual',
+    side: state.currentSide,
+    rawGrades: 'A,B,R',
+    allowedGrades: ['A', 'B', 'X']
   };
 
   const defectItem = {
     coord,
     row,
     col,
+    side: state.currentSide, // 'front' | 'back'
     defectCode,
-    defectType: catalogEntry.typeId || DEFECT_CODE_TO_ID[defectCode] || 1, // int2
     defectName: catalogEntry.name,
-    severity: catalogEntry.severity,
-    gradeImpact: catalogEntry.defaultGrade,
+    category: catalogEntry.category,
+    rawGrades: catalogEntry.rawGrades,
+    allowedGrades: catalogEntry.allowedGrades || ['A', 'B', 'R', 'X'],
+    gradeImpact: catalogEntry.rawGrades,
     timestamp: new Date().toLocaleTimeString(),
     notes: (notes || '').trim(),
-    operatorId: state.currentOperator.id,
-    operatorName: state.currentOperator.name
+    operatorName: (state.currentOperator && state.currentOperator.name) || 'Inspector'
   };
 
   state.defects.set(coord, defectItem);
 
-  if (defectCode.startsWith('X') && state.grade !== 'X') {
-    showToast(`Critical defect ${defectCode} flagged. Consider setting Grade to [X].`, 'warning');
-  }
-
   updateSummaryAndHistory();
   updateDefectPin(coord);
+  recomputeAllowedGrades();
 
   // INSTANT DATABASE PERSISTENCE (POST /api/defects -> final_inspection_defects)
   if (syncToDatabase) {
@@ -737,7 +1065,7 @@ function setDefect(coord, row, col, defectCode, notes = '', notify = true, syncT
   }
 
   if (notify) {
-    showToast(`Logged [${defectCode}] at Cell ${coord}`, 'success');
+    showToast(`Logged [${defectCode} - ${catalogEntry.name}] at Cell ${coord} (${state.currentSide.toUpperCase()})`, 'success');
     soundFx.beep(920, 0.08);
   }
 }
@@ -750,15 +1078,14 @@ function setDefect(coord, row, col, defectCode, notes = '', notify = true, syncT
 function persistDefectToDatabase(defect) {
   const defectName = defect.defectName || (DEFECT_CATALOG[defect.defectCode] ? DEFECT_CATALOG[defect.defectCode].name : 'Defect');
   const payload = {
-    module_id: (state.moduleId || '').slice(0, 16), // nvarchar(16)
-    defect_location: defect.coord, // nvarchar(4) e.g. "C8" (matches dbo.Final_Inspection_Defects.Defect_Location)
-    defect_cell: defect.coord, // backwards compatibility
-    defect_type: defectName.slice(0, 30), // nvarchar(30) (matches dbo.Final_Inspection_Defects.Defect_Type)
-    tester_name: state.currentOperator.name || state.currentOperator.username || 'Inspector',
-
-    // Auxiliary fields for client-side state & logging
+    module_id: (state.moduleId || '').slice(0, 16),
+    defect_location: defect.coord,
+    defect_cell: defect.coord,
     defect_code: defect.defectCode,
+    defect_type: defectName.slice(0, 30),
     defect_name: defectName,
+    side: defect.side || state.currentSide || 'front',
+    tester_name: (state.currentOperator && state.currentOperator.name) || 'Inspector',
     row_id: defect.row,
     col_id: defect.col,
     notes: defect.notes
@@ -774,35 +1101,15 @@ function persistDefectToDatabase(defect) {
   })
     .then(res => res.json())
     .then(data => {
-      if (data.success) {
-        if (dom.pillDbStatus) {
-          dom.pillDbStatus.className = 'status-indicator-pill status-live';
-          dom.pillDbStatus.innerHTML = `<span class="status-pip"></span><span>DEFECT #${data.record_id || data.defect_id || ''}</span>`;
-          setTimeout(() => {
-            dom.pillDbStatus.innerHTML = '<span class="status-pip"></span><span>DB LIVE</span>';
-          }, 2000);
-        }
+      if (data.success && dom.pillDbStatus) {
+        dom.pillDbStatus.className = 'status-indicator-pill status-live';
+        dom.pillDbStatus.innerHTML = `<span class="status-pip"></span><span>DEFECT #${data.record_id || ''}</span>`;
+        setTimeout(() => {
+          dom.pillDbStatus.innerHTML = '<span class="status-pip"></span><span>DB LIVE</span>';
+        }, 2000);
       }
     })
-    .catch(err => {
-      // Offline queue fallback
-      queueDefectOffline(payload);
-    });
-}
-
-/**
- * Queue Defect in LocalStorage when Offline
- */
-function queueDefectOffline(payload) {
-  try {
-    const queue = JSON.parse(localStorage.getItem('fvi_offline_defects') || '[]');
-    queue.push(payload);
-    localStorage.setItem('fvi_offline_defects', JSON.stringify(queue));
-    if (dom.pillDbStatus) {
-      dom.pillDbStatus.className = 'status-indicator-pill status-warn';
-      dom.pillDbStatus.innerHTML = `<span class="status-pip"></span><span>QUEUED (${queue.length})</span>`;
-    }
-  } catch (e) { }
+    .catch(() => { });
 }
 
 /**
@@ -813,6 +1120,7 @@ function removeDefect(coord) {
     state.defects.delete(coord);
     updateSummaryAndHistory();
     updateDefectPin(coord);
+    recomputeAllowedGrades();
     showToast(`Defect removed from ${coord}`, 'info');
     soundFx.beep(350, 0.08);
 
@@ -853,16 +1161,19 @@ function updateSummaryAndHistory() {
     });
 
     sortedDefects.forEach(defect => {
-      notationList.push(`${defect.coord} ${defect.defectCode}`);
+      const sideText = (defect.side || 'front').toUpperCase();
+      const sideClass = (defect.side || 'front').toLowerCase();
+      notationList.push(`${defect.coord} ${defect.defectCode}(${sideText[0]})`);
 
       const tr = document.createElement('tr');
       tr.className = 'history-row';
-      tr.title = 'Click to focus cell on inspection stage';
+      tr.title = `Click to focus cell on inspection stage (${sideText} SIDE)`;
       tr.innerHTML = `
         <td><span class="cell-pill">${defect.coord}</span></td>
+        <td><span class="side-pill side-${sideClass}">${sideText}</span></td>
         <td><span class="code-pill code-${defect.defectCode.charAt(0).toLowerCase()}">${defect.defectCode}</span></td>
-        <td class="defect-name-cell" title="${defect.defectName}">${defect.defectName}</td>
-        <td><span class="font-bold text-muted">${defect.gradeImpact}</span></td>
+        <td class="defect-name-cell" title="${defect.defectName} (${defect.category || 'Visual'})">${defect.defectName}</td>
+        <td><span class="grade-options-pill" title="Allowed: ${defect.rawGrades}">${defect.rawGrades}</span></td>
         <td class="text-right">
           <button type="button" class="btn-delete-row" data-delete-coord="${defect.coord}" title="Delete defect">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -875,6 +1186,10 @@ function updateSummaryAndHistory() {
 
       tr.addEventListener('click', (e) => {
         if (e.target.closest('.btn-delete-row')) return;
+        // If defect was tagged on opposite side, flip viewport to match
+        if (defect.side && defect.side !== state.currentSide) {
+          toggleInspectionSide(defect.side);
+        }
         openComicBubble(defect.coord, defect.row, defect.col);
       });
 
@@ -910,10 +1225,102 @@ const NUMERIC_TO_GRADE_LETTER = {
 };
 
 /**
- * Handle Grade Toggle (A, B, R, X) - Single select only
+ * Recompute intersection of allowable grades across all logged defects
+ * Enforces plant quality rules (e.g. O3 allows only Retest/Rework or Reject)
+ */
+function recomputeAllowedGrades() {
+  const allGrades = ['A', 'B', 'R', 'X'];
+  if (state.defects.size === 0) {
+    state.allowedGrades = allGrades;
+    updateGradeButtonsUI(allGrades);
+    return allGrades;
+  }
+
+  let intersection = null;
+  state.defects.forEach(defect => {
+    const entry = DEFECT_CATALOG[defect.defectCode];
+    const allowed = (entry && entry.allowedGrades) ? entry.allowedGrades : (defect.allowedGrades || allGrades);
+    if (intersection === null) {
+      intersection = new Set(allowed);
+    } else {
+      const next = new Set();
+      allowed.forEach(g => {
+        if (intersection.has(g)) next.add(g);
+      });
+      intersection = next;
+    }
+  });
+
+  const finalAllowed = (intersection && intersection.size > 0) ? Array.from(intersection) : ['X'];
+  state.allowedGrades = finalAllowed;
+  updateGradeButtonsUI(finalAllowed);
+
+  // If currently active grade is now prohibited by a newly added defect, adjust or clear it
+  if (state.grade && !finalAllowed.includes(state.grade)) {
+    if (finalAllowed.length === 1) {
+      setGrade(finalAllowed[0]);
+      showToast(`Grade automatically adjusted to [${finalAllowed[0]}] per defect criteria`, 'info');
+    } else {
+      resetGrade();
+      const gradeNames = finalAllowed.map(g => g === 'A' ? 'Prime (A)' : (g === 'B' ? 'Secondary (B)' : (g === 'R' ? 'Rework (R)' : 'Reject (X)'))).join(' or ');
+      showToast(`Selected grade reset: Logged defects restrict options to ${gradeNames}`, 'warning');
+    }
+  }
+
+  return finalAllowed;
+}
+
+/**
+ * Update visual enabled/disabled state of grade buttons and restrictions hint banner
+ */
+function updateGradeButtonsUI(allowedGrades) {
+  dom.gradeButtons.forEach(btn => {
+    const g = btn.dataset.grade;
+    const isAllowed = allowedGrades.includes(g);
+    btn.classList.toggle('grade-disabled', !isAllowed);
+    btn.setAttribute('aria-disabled', !isAllowed ? 'true' : 'false');
+  });
+
+  if (dom.gradeRestrictionsHint) {
+    if (allowedGrades.length < 4 && state.defects.size > 0) {
+      const names = allowedGrades.map(g => {
+        if (g === 'A') return 'A Prime';
+        if (g === 'B') return 'B Secondary';
+        if (g === 'R') return 'Retest/Rework';
+        if (g === 'X') return 'Reject';
+        return g;
+      }).join(', ');
+      dom.gradeRestrictionsHint.textContent = `Allowed: ${names}`;
+      dom.gradeRestrictionsHint.style.display = 'inline-flex';
+    } else {
+      dom.gradeRestrictionsHint.style.display = 'none';
+    }
+  }
+}
+
+/**
+ * Handle Grade Toggle (A, B, R, X) with defect validation enforcement
  */
 function setGrade(newGrade) {
+  const allowed = state.allowedGrades || recomputeAllowedGrades();
   const letterGrade = NUMERIC_TO_GRADE_LETTER[newGrade] || newGrade;
+
+  // Enforce defect grading logic
+  if (!allowed.includes(letterGrade)) {
+    const gradeNames = { 'A': 'Grade A (Prime)', 'B': 'Grade B (Secondary)', 'R': 'Retest / Rework', 'X': 'Reject' };
+    const allowedNames = allowed.map(g => gradeNames[g] || g).join(', ');
+    showToast(`Cannot select ${gradeNames[letterGrade] || letterGrade}. Logged defect rules permit only: ${allowedNames}`, 'warning');
+    soundFx.beep(280, 0.15);
+
+    const gradeControl = document.getElementById('segmented-grade-control');
+    if (gradeControl) {
+      gradeControl.classList.remove('highlight-error');
+      void gradeControl.offsetWidth;
+      gradeControl.classList.add('highlight-error');
+    }
+    return;
+  }
+
   state.grade = letterGrade;
   soundFx.beep(520, 0.06);
 
@@ -1224,10 +1631,10 @@ function fitInspectionStage() {
   const frameRect = dom.inspectionFrame.getBoundingClientRect();
   if (frameRect.width <= 0 || frameRect.height <= 0) return;
 
-  const padX = 20;
-  const padY = 8;
+  const padX = 24;
+  const padY = 16;
   const axisYWidth = 28;
-  const axisTotalXHeight = 36; // 18px top axis + 18px bottom mirror axis
+  const axisTotalXHeight = 40; // 20px top axis + 20px bottom mirror axis
 
   const availW = Math.max(120, frameRect.width - padX);
   const availH = Math.max(100, frameRect.height - padY);
@@ -1283,6 +1690,49 @@ function fitInspectionStage() {
  * Attach Event Listeners
  */
 function attachEventListeners() {
+  // Front / Back Side View Switcher buttons
+  if (dom.btnSideFront) {
+    dom.btnSideFront.addEventListener('click', () => {
+      toggleInspectionSide('front');
+    });
+  }
+  if (dom.btnSideBack) {
+    dom.btnSideBack.addEventListener('click', () => {
+      toggleInspectionSide('back');
+    });
+  }
+
+  // Comic Bubble Defect Search & Clear
+  if (dom.bubbleSearchInput) {
+    dom.bubbleSearchInput.addEventListener('input', (e) => {
+      bubbleSearchQuery = e.target.value;
+      if (dom.btnClearSearch) {
+        dom.btnClearSearch.style.display = bubbleSearchQuery.length > 0 ? 'inline-flex' : 'none';
+      }
+      renderDefectReasonItems();
+    });
+  }
+  if (dom.btnClearSearch) {
+    dom.btnClearSearch.addEventListener('click', (e) => {
+      e.stopPropagation();
+      bubbleSearchQuery = '';
+      if (dom.bubbleSearchInput) {
+        dom.bubbleSearchInput.value = '';
+        dom.bubbleSearchInput.focus();
+      }
+      dom.btnClearSearch.style.display = 'none';
+      renderDefectReasonItems();
+    });
+  }
+
+  // Automatic Viewport Stage Fit via ResizeObserver
+  if (window.ResizeObserver && dom.inspectionFrame) {
+    const frameObserver = new ResizeObserver(() => {
+      fitInspectionStage();
+    });
+    frameObserver.observe(dom.inspectionFrame);
+  }
+
   // Module ID syncing
   dom.moduleIdInput.addEventListener('input', (e) => {
     state.moduleId = e.target.value.trim();
@@ -1651,20 +2101,21 @@ function attachEventListeners() {
 
     const key = e.key.toUpperCase();
 
-    if (key === 'A' || key === 'B' || key === 'R' || key === 'X') {
+    // Hotkey F: Flip Front / Back Side View
+    if (key === 'F') {
+      toggleInspectionSide();
+    }
+    else if (key === 'A' || key === 'B' || key === 'R' || key === 'X') {
       setGrade(key);
     }
     else if (['1', '2', '3', '4', '5', '6', '7', '8'].includes(e.key)) {
-      const targetCodeMap = {
-        '1': 'A1', '2': 'A2', '3': 'B1', '4': 'B2',
-        '5': 'C1', '6': 'X1', '7': 'X2', '8': 'X3'
-      };
-      const code = targetCodeMap[e.key];
-      if (code) {
-        state.selectedDefectCode = code;
-        dom.bubbleReasonItems.forEach(i => i.classList.toggle('selected', i.dataset.code === code));
-        setBubbleConfirmState(true);
-        soundFx.beep(640, 0.04);
+      if (dom.cellComicBubble && dom.cellComicBubble.style.display === 'flex') {
+        // Quick select from visible defect items in the bubble
+        const index = parseInt(e.key, 10) - 1;
+        const visibleItems = dom.bubbleReasonsList ? dom.bubbleReasonsList.querySelectorAll('.bubble-reason-item') : [];
+        if (visibleItems[index]) {
+          visibleItems[index].click();
+        }
       }
     }
     else if (e.key === 'Enter') {
@@ -1730,6 +2181,16 @@ function attachEventListeners() {
         gradeControl.classList.add('highlight-error');
         gradeControl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
+      return;
+    }
+
+    // 2. Validate against allowed grades from logged defects
+    const allowed = state.allowedGrades || recomputeAllowedGrades();
+    if (allowed.length > 0 && !allowed.includes(state.grade)) {
+      const gradeNames = { 'A': 'Grade A (Prime)', 'B': 'Grade B (Secondary)', 'R': 'Retest / Rework', 'X': 'Reject' };
+      const allowedNames = allowed.map(g => gradeNames[g] || g).join(' or ');
+      showToast(`Grade [${state.grade}] is blocked by logged defects! Permitted: ${allowedNames}`, 'error');
+      soundFx.beep(220, 0.2);
       return;
     }
 

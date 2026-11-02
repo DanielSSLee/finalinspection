@@ -108,6 +108,7 @@
             <span class="grade-text">REJECT</span>
           </button>
         </div>
+        <div class="grade-restrictions-hint" id="grade-restrictions-hint" style="display: none;"></div>
       </div>
 
       <!-- Center-Right: Workstation View Mode Switcher (Visual • Unified 1-Screen • Metrology) -->
@@ -211,11 +212,12 @@
             <table class="history-table" id="history-table">
               <thead>
                 <tr>
-                  <th style="width: 50px;">CELL</th>
-                  <th style="width: 48px;">CODE</th>
+                  <th style="width: 44px;">CELL</th>
+                  <th style="width: 40px;">SIDE</th>
+                  <th style="width: 44px;">CODE</th>
                   <th>DEFECT CLASSIFICATION</th>
-                  <th style="width: 38px;">GRD</th>
-                  <th style="width: 32px; text-align: right;">DEL</th>
+                  <th style="width: 55px;">GRD</th>
+                  <th style="width: 28px; text-align: right;">DEL</th>
                 </tr>
               </thead>
               <tbody id="history-tbody">
@@ -248,6 +250,20 @@
           <div class="toolbar-title-group">
             <span class="stage-status-indicator"></span>
             <span class="telemetry-pill" id="live-coord-indicator">Hover image to view grid</span>
+          </div>
+
+          <!-- Front / Back Side Inspection Switcher -->
+          <div class="side-switch-control" id="side-switch-control" role="radiogroup" aria-label="Inspection Side Selection">
+            <button type="button" class="btn-side-toggle active" data-side="front" id="btn-side-front"
+              title="Inspect Front Side (Cells, Glass, Ribbon) [Hotkey: F]">
+              <span class="side-pill-dot side-front-dot"></span>
+              <span>FRONT SIDE</span>
+            </button>
+            <button type="button" class="btn-side-toggle" data-side="back" id="btn-side-back"
+              title="Inspect Back Side (Backsheet, Junction Box) [Hotkey: F]">
+              <span class="side-pill-dot side-back-dot"></span>
+              <span>BACK SIDE</span>
+            </button>
           </div>
 
           <div class="toolbar-tool-group">
@@ -296,6 +312,12 @@
 
               <!-- Calibrated Stage -->
               <div class="image-stage" id="image-stage">
+                <!-- Floating Inspection Side Badge -->
+                <div class="stage-side-badge front" id="stage-side-badge" title="Current inspection viewport side">
+                  <span class="badge-dot"></span>
+                  <span class="badge-text" id="stage-side-badge-text">FRONT SIDE (CELLS)</span>
+                </div>
+
                 <img src="solar_el_sample.jpg" alt="Photovoltaic Solar Module Electroluminescence Test" id="el-image"
                   class="el-display-img" draggable="false"
                   style="width: 100%; height: 100%; object-fit: fill; display: block;">
@@ -322,53 +344,51 @@
                   <div class="bubble-header">
                     <div class="bubble-title-group">
                       <span class="bubble-cell-badge" id="bubble-cell-coord">CELL C-08</span>
-                      <span class="bubble-hint">Select reason:</span>
+                      <span class="bubble-side-badge front" id="bubble-side-badge">FRONT SIDE</span>
                     </div>
                     <button type="button" class="bubble-close-btn" id="btn-bubble-close"
                       aria-label="Close bubble">&times;</button>
                   </div>
 
+                  <!-- Quick Filter & Category Navigation -->
+                  <div class="bubble-filter-section">
+                    <div class="bubble-search-wrap">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                      </svg>
+                      <input type="text" id="bubble-search-input" class="bubble-search-field"
+                        placeholder="Search defect (e.g. O3, crack, J-Box)..." autocomplete="off">
+                      <button type="button" class="bubble-search-clear" id="btn-clear-search" style="display: none;">&times;</button>
+                    </div>
+
+                    <div class="bubble-category-tabs" id="bubble-category-tabs" role="tablist">
+                      <!-- Populated dynamically based on active side (Front/Back/Both) -->
+                    </div>
+                  </div>
+
                   <div class="bubble-body">
-                    <!-- 8 Defect Reasons List -->
+                    <!-- Dynamic Defect Reasons List (55 IEC Classified Plant Presets) -->
                     <div class="bubble-reasons-list" id="bubble-reasons-list">
-                      <button type="button" class="bubble-reason-item" data-code="A1">
-                        <span class="reason-code code-a">A1</span>
-                        <span class="reason-label">Micro-Crack (Hairline)</span>
-                      </button>
-                      <button type="button" class="bubble-reason-item" data-code="A2">
-                        <span class="reason-code code-a">A2</span>
-                        <span class="reason-label">Cross Crack / Star Crack</span>
-                      </button>
-                      <button type="button" class="bubble-reason-item" data-code="B1">
-                        <span class="reason-code code-b">B1</span>
-                        <span class="reason-label">Dead Finger / Inactive Area</span>
-                      </button>
-                      <button type="button" class="bubble-reason-item" data-code="B2">
-                        <span class="reason-code code-b">B2</span>
-                        <span class="reason-label">Solder Disconnect / Void</span>
-                      </button>
-                      <button type="button" class="bubble-reason-item" data-code="C1">
-                        <span class="reason-code code-c">C1</span>
-                        <span class="reason-label">Dark Cell / Low Shunt</span>
-                      </button>
-                      <button type="button" class="bubble-reason-item" data-code="X1">
-                        <span class="reason-code code-x">X1</span>
-                        <span class="reason-label">Broken Cell / Corner V-Crack</span>
-                      </button>
-                      <button type="button" class="bubble-reason-item" data-code="X2">
-                        <span class="reason-code code-x">X2</span>
-                        <span class="reason-label">Severe Hotspot / Solder Bead</span>
-                      </button>
-                      <button type="button" class="bubble-reason-item" data-code="X3">
-                        <span class="reason-code code-x">X3</span>
-                        <span class="reason-label">Delamination / Foreign Mat.</span>
-                      </button>
+                      <!-- Rendered by JS -->
+                    </div>
+
+                    <!-- Defect Details & Grade Options Hover / Active Preview -->
+                    <div class="bubble-hover-info" id="bubble-hover-info" style="display: none;">
+                      <div class="hover-info-row">
+                        <span class="hover-info-title" id="hover-info-title">Defect Description</span>
+                        <span class="hover-info-side" id="hover-info-side">Front Side</span>
+                      </div>
+                      <div class="hover-info-grades" id="hover-info-grades">
+                        <span class="hover-grades-label">Grade Options:</span>
+                        <span class="hover-grades-val" id="hover-grades-val">A, B, R</span>
+                      </div>
                     </div>
 
                     <!-- Optional Notes Input -->
                     <div class="bubble-notes-wrap">
                       <input type="text" id="bubble-notes-input" class="bubble-notes-field"
-                        placeholder="Optional notes (e.g. junction flaw)..." autocomplete="off">
+                        placeholder="Optional notes (e.g. junction flaw, micro-fissure)..." autocomplete="off">
                     </div>
                   </div>
 
@@ -407,9 +427,9 @@
             <span class="telemetry-metric" id="cursor-pos-readout">Cursor: Ready</span>
           </div>
           <div class="footer-segment hotkeys-bar">
+            <span class="hotkey-item"><kbd>F</kbd> Flip Front/Back</span>
             <span class="hotkey-item"><kbd>M</kbd> View Mode (Split/Full)</span>
             <span class="hotkey-item"><kbd>A</kbd><kbd>B</kbd><kbd>R</kbd><kbd>X</kbd> Grade</span>
-            <span class="hotkey-item"><kbd>1</kbd>–<kbd>8</kbd> Quick Pick</span>
             <span class="hotkey-item"><kbd>Enter</kbd> Confirm &amp; Save DB</span>
             <span class="hotkey-item"><kbd>I</kbd> Invert</span>
             <span class="hotkey-item"><kbd>G</kbd> Grid Lock</span>

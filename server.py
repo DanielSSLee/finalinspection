@@ -617,6 +617,10 @@ def init_database():
         except Exception:
             pass
         try:
+            cursor.execute("ALTER TABLE final_inspection_defects ADD COLUMN side VARCHAR(10) DEFAULT 'front'")
+        except Exception:
+            pass
+        try:
             cursor.execute("ALTER TABLE cmms_users ADD COLUMN email TEXT")
         except Exception:
             pass
@@ -649,17 +653,23 @@ def init_database():
 # ---------------------------------------------------------------------------
 # FTP Image Fetcher (Connects to EL Testing PC)
 # ---------------------------------------------------------------------------
-def fetch_el_image_via_ftp(panel_id):
+def fetch_el_image_via_ftp(panel_id, side="front"):
     """
-    Connects to the EL Testing PC via FTP and downloads {panel_id}.jpg
+    Connects to the EL Testing PC via FTP and downloads {panel_id}.jpg (or {panel_id}_back.jpg)
     Caches the image locally in CACHE_DIR.
     """
-    local_file = CACHE_DIR / f"{panel_id}.jpg"
+    side_normalized = "back" if str(side).lower() in ("back", "rear", "b") else "front"
+    suffix = "_back" if side_normalized == "back" else ""
+    local_file = CACHE_DIR / f"{panel_id}{suffix}.jpg"
     if local_file.exists():
         return local_file, "CACHED"
 
     if not CONFIG["ftp"]["enabled"]:
         # If FTP is not physically online yet, fallback to local sample images
+        if side_normalized == "back":
+            back_sample = BASE_DIR / "sample_el_back.jpg"
+            if back_sample.exists():
+                return back_sample, "FALLBACK_SAMPLE_BACK"
         fallback_samples = [
             BASE_DIR / "solar_el_sample.jpg",
             BASE_DIR / "sample_el_2.jpg",
@@ -678,15 +688,31 @@ def fetch_el_image_via_ftp(panel_id):
         ftp.login(ftp_cfg["username"], ftp_cfg["password"])
         ftp.cwd(ftp_cfg["remote_dir"])
 
-        remote_name = f"{panel_id}.jpg"
-        with open(local_file, "wb") as f:
-            ftp.retrbinary(f"RETR {remote_name}", f.write)
+        # Try multiple candidate names for front/back
+        if side_normalized == "back":
+            candidates = [f"{panel_id}_back.jpg", f"{panel_id}_B.jpg", f"{panel_id}_rear.jpg", f"{panel_id}.jpg"]
+        else:
+            candidates = [f"{panel_id}.jpg", f"{panel_id}_front.jpg", f"{panel_id}_F.jpg"]
+
+        downloaded = False
+        for remote_name in candidates:
+            try:
+                with open(local_file, "wb") as f:
+                    ftp.retrbinary(f"RETR {remote_name}", f.write)
+                downloaded = True
+                break
+            except Exception:
+                continue
+
         ftp.quit()
-        return local_file, "FTP_DOWNLOADED"
+        if downloaded:
+            return local_file, "FTP_DOWNLOADED"
+        else:
+            default_sample = BASE_DIR / ("sample_el_back.jpg" if side_normalized == "back" else "solar_el_sample.jpg")
+            return default_sample, "FTP_FALLBACK"
     except Exception as e:
-        print(f"[FTP Error] Failed to fetch image for {panel_id}: {e}")
-        # Fallback to local sample
-        default_sample = BASE_DIR / "solar_el_sample.jpg"
+        print(f"[FTP Error] Failed to fetch {side_normalized} image for {panel_id}: {e}")
+        default_sample = BASE_DIR / ("sample_el_back.jpg" if side_normalized == "back" else "solar_el_sample.jpg")
         if default_sample.exists():
             return default_sample, "FTP_ERROR_FALLBACK"
         return None, f"FTP_ERROR: {e}"
@@ -1026,12 +1052,14 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
             self.send_json(200, current_conveyor_panel)
             return
 
-        # 5. Fetch EL Image via FTP
+        # 5. Fetch EL Image via FTP (Front or Back Side)
         if path.startswith("/api/module/") and path.endswith("/el-image"):
-            # URL: /api/module/{panel_id}/el-image
+            # URL: /api/module/{panel_id}/el-image?side=front|back
+            query = parse_qs(parsed.query)
+            side = query.get("side", ["front"])[0].lower()
             parts = path.strip("/").split("/")
             panel_id = parts[2] if len(parts) >= 3 else "DEFAULT"
-            image_path, source = fetch_el_image_via_ftp(panel_id)
+            image_path, source = fetch_el_image_via_ftp(panel_id, side=side)
 
             if image_path and image_path.exists():
                 with open(image_path, "rb") as f:
@@ -1212,9 +1240,10 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
             module_id = str(payload.get("module_id", "")).strip()[:16]
             defect_location = str(payload.get("defect_location") or payload.get("defect_cell") or payload.get("cell_coord", "")).strip()[:4]
             defect_code = payload.get("defect_code", "A1")
-            defect_name = payload.get("defect_name") or DEFECT_CODE_TO_NAME.get(defect_code) or str(payload.get("defect_type") or "Defect")
+            defect_name = payload.get("defect_name") or str(payload.get("defect_type") or "Defect")
             defect_type = str(defect_name).strip()[:30]
             tester_name = str(payload.get("tester_name") or payload.get("operator_name", "Inspector")).strip()
+            side = str(payload.get("side", "front")).strip().lower()
 
             if not module_id or not defect_location:
                 self.send_json(400, {"error": "Missing required fields (module_id, defect_location)"})
@@ -1230,15 +1259,21 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
             # 2. Always persist to local SQLite for UI instant querying, sequential record_id, and offline cache
             with get_db() as local_conn:
                 local_cur = local_conn.cursor()
-                local_cur.execute("""
-                INSERT INTO final_inspection_defects (module_id, defect_location, defect_cell, defect_type, tester_name)
-                VALUES (?, ?, ?, ?, ?)
-                """, (module_id, defect_location, defect_location, defect_type, tester_name))
+                try:
+                    local_cur.execute("""
+                    INSERT INTO final_inspection_defects (module_id, defect_location, defect_cell, defect_type, tester_name, side)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """, (module_id, defect_location, defect_location, defect_type, tester_name, side))
+                except Exception:
+                    local_cur.execute("""
+                    INSERT INTO final_inspection_defects (module_id, defect_location, defect_cell, defect_type, tester_name)
+                    VALUES (?, ?, ?, ?, ?)
+                    """, (module_id, defect_location, defect_location, defect_type, tester_name))
                 local_conn.commit()
                 record_id = local_cur.lastrowid
 
             dest_str = f"MSSQL ({mssql_engine})" if mssql_success else "SQLite (Local Cache)"
-            print(f"[DB Sync] Inserted into Final_Inspection_Defects [{dest_str}]: {module_id} cell {defect_location} type '{defect_type}' by {tester_name} (Local ID: #{record_id})")
+            print(f"[DB Sync] Inserted into Final_Inspection_Defects [{dest_str}]: {module_id} cell {defect_location} type '{defect_type}' ({side}) by {tester_name} (Local ID: #{record_id})")
 
             self.send_json(200, {
                 "success": True,
@@ -1248,6 +1283,7 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                 "defect_location": defect_location,
                 "defect_cell": defect_location,
                 "defect_type": defect_type,
+                "side": side,
                 "tester_name": tester_name,
                 "mssql_synced": mssql_success,
                 "engine": mssql_engine if mssql_success else "SQLITE_LOCAL"
