@@ -152,6 +152,17 @@
           <span>SQL Ready</span>
         </button>
 
+        <a href="database.html" target="_blank" id="btn-view-database" class="console-btn secondary"
+          title="Open Scanned Module Grading Database Log">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+            <path d="M4 6h16M4 12h16M4 18h16"></path>
+            <circle cx="2" cy="6" r="1"></circle>
+            <circle cx="2" cy="12" r="1"></circle>
+            <circle cx="2" cy="18" r="1"></circle>
+          </svg>
+          <span>Grading Log ↗</span>
+        </a>
+
         <button type="button" id="btn-launch-telemetry" class="console-btn secondary"
           title="Open Monitor 2 Popout (For Dual-Monitor Workstations)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
@@ -237,6 +248,41 @@
           <div class="whiteboard-strip">
             <span class="strip-label">WHITEBOARD SYNTAX:</span>
             <span class="strip-code text-mono" id="whiteboard-notation-preview">(None)</span>
+          </div>
+        </div>
+
+        <!-- Grading History (Bottom Half: Scanned modules & submitted grades in time descending order) -->
+        <div class="dock-block grading-history-block">
+          <div class="block-header">
+            <div class="header-left-title">
+              <h2 class="block-title">GRADING HISTORY</h2>
+              <span class="count-badge" id="grading-history-badge">0</span>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <button type="button" id="btn-refresh-grading-history" class="btn-text-action" title="Refresh grading history">↻</button>
+              <a href="database.html" target="_blank" class="btn-text-action" title="Open full database log in new tab">Log ↗</a>
+            </div>
+          </div>
+
+          <div class="history-table-wrapper grading-history-wrapper">
+            <table class="history-table grading-history-table" id="grading-history-table">
+              <thead>
+                <tr>
+                  <th style="width: 58px;">TIME</th>
+                  <th>SERIAL NUMBER</th>
+                  <th style="width: 65px; text-align: right;">GRADE</th>
+                </tr>
+              </thead>
+              <tbody id="grading-history-tbody">
+                <!-- Injected by JS in time descending order -->
+              </tbody>
+            </table>
+
+            <!-- Empty State -->
+            <div class="empty-history" id="empty-grading-history-state">
+              <p class="empty-title">No Gradings Yet</p>
+              <p class="empty-subtitle">Modules graded will appear here in time descending order.</p>
+            </div>
           </div>
         </div>
 

@@ -1091,20 +1091,104 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
             return
 
         # 7. Fetch Overall Inspection / Grade for Module (table: dbo.Final_Inspections)
+        # Supports: ?module_id=..., ?search=..., ?grade=..., ?limit=...
+        # Returns records ordered by tested_at DESC, with joined defect statistics
         if path.startswith("/api/inspections"):
             query = parse_qs(parsed.query)
             mod_id = query.get("module_id", [None])[0]
             with get_db() as conn:
                 cursor = conn.cursor()
                 if mod_id:
-                    cursor.execute("SELECT * FROM final_inspections WHERE module_id = ? LIMIT 1", (mod_id,))
+                    cursor.execute("""
+                    SELECT 
+                        fi.record_id,
+                        fi.module_id,
+                        fi.tested_at,
+                        fi.grade,
+                        fi.result_code,
+                        fi.tester_name,
+                        COUNT(fd.record_id) as defect_count,
+                        GROUP_CONCAT(fd.defect_type, '; ') as defect_summary
+                    FROM final_inspections fi
+                    LEFT JOIN final_inspection_defects fd ON fi.module_id = fd.module_id
+                    WHERE fi.module_id = ?
+                    GROUP BY fi.record_id
+                    ORDER BY fi.record_id DESC LIMIT 1
+                    """, (mod_id,))
                     row = cursor.fetchone()
                     data = dict(row) if row else None
+                    self.send_json(200, {"inspection": data, "records": [data] if data else []})
+                    return
                 else:
-                    cursor.execute("SELECT * FROM final_inspections ORDER BY record_id DESC LIMIT 50")
-                    data = [dict(r) for r in cursor.fetchall()]
-            self.send_json(200, {"inspection": data})
-            return
+                    search_term = query.get("search", [None])[0] or query.get("q", [None])[0]
+                    grade_filter = query.get("grade", [None])[0]
+                    limit_str = query.get("limit", ["200"])[0]
+                    limit = int(limit_str) if limit_str and limit_str.isdigit() else 200
+
+                    sql = """
+                    SELECT 
+                        fi.record_id,
+                        fi.module_id,
+                        fi.tested_at,
+                        fi.grade,
+                        fi.result_code,
+                        fi.tester_name,
+                        COUNT(fd.record_id) as defect_count,
+                        GROUP_CONCAT(fd.defect_type, '; ') as defect_summary
+                    FROM final_inspections fi
+                    LEFT JOIN final_inspection_defects fd ON fi.module_id = fd.module_id
+                    """
+                    params = []
+                    where_clauses = []
+
+                    if search_term:
+                        st = f"%{search_term.strip()}%"
+                        where_clauses.append("(fi.module_id LIKE ? OR fi.tester_name LIKE ? OR fi.tested_at LIKE ? OR fi.grade LIKE ?)")
+                        params.extend([st, st, st, st])
+
+                    if grade_filter and grade_filter.upper() != "ALL":
+                        # Match both numeric (0,1,2,3) and letter (A,B,R,X)
+                        g_map = {"A": ["A", "0"], "B": ["B", "1"], "R": ["R", "2"], "X": ["X", "3"]}
+                        grades = g_map.get(grade_filter.upper(), [grade_filter])
+                        placeholders = ",".join("?" for _ in grades)
+                        where_clauses.append(f"fi.grade IN ({placeholders})")
+                        params.extend(grades)
+
+                    if where_clauses:
+                        sql += " WHERE " + " AND ".join(where_clauses)
+
+                    sql += """
+                    GROUP BY fi.record_id
+                    ORDER BY fi.tested_at DESC, fi.record_id DESC
+                    LIMIT ?
+                    """
+                    params.append(limit)
+
+                    cursor.execute(sql, tuple(params))
+                    rows = [dict(r) for r in cursor.fetchall()]
+
+                    # Compute live summary metrics
+                    cursor.execute("""
+                    SELECT 
+                        COUNT(*) as total,
+                        SUM(CASE WHEN grade IN ('0', 'A') THEN 1 ELSE 0 END) as count_a,
+                        SUM(CASE WHEN grade IN ('1', 'B') THEN 1 ELSE 0 END) as count_b,
+                        SUM(CASE WHEN grade IN ('2', 'R') THEN 1 ELSE 0 END) as count_r,
+                        SUM(CASE WHEN grade IN ('3', 'X') THEN 1 ELSE 0 END) as count_x
+                    FROM final_inspections
+                    """)
+                    sum_row = cursor.fetchone()
+                    summary = dict(sum_row) if sum_row else {"total": 0, "count_a": 0, "count_b": 0, "count_r": 0, "count_x": 0}
+                    if summary.get("total") is None:
+                        summary = {"total": 0, "count_a": 0, "count_b": 0, "count_r": 0, "count_x": 0}
+
+                    self.send_json(200, {
+                        "inspection": rows,
+                        "records": rows,
+                        "total_count": summary.get("total", len(rows)),
+                        "summary": summary
+                    })
+                    return
 
         # 8. Sun Simulator Metrology Endpoint (SQLExpress / Simulation Fallback)
         if path.startswith("/api/telemetry/sunsim"):
@@ -1141,6 +1225,13 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
         if not rel_path or rel_path == "":
             rel_path = "index.html"
         
+        if rel_path in ("database", "records", "history", "grading"):
+            query_str = f"?{parsed.query}" if parsed.query else ""
+            self.send_response(302)
+            self.send_header("Location", f"/database.html{query_str}")
+            self.end_headers()
+            return
+
         if rel_path in ("unified", "unified.html"):
             query_str = f"?{parsed.query}" if parsed.query else "?view=split"
             if "view=split" not in query_str:
@@ -1335,29 +1426,16 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
             """
             mssql_success, mssql_engine = execute_mssql_insert(mssql_query, (module_id, grade, tester_name))
 
-            # 2. Persist to local SQLite (upsert single active grade per module)
+            # 2. Persist to local SQLite (append grading event to preserve full audit log)
             with get_db() as local_conn:
                 local_cur = local_conn.cursor()
-                local_cur.execute("SELECT record_id FROM final_inspections WHERE module_id = ? LIMIT 1", (module_id,))
-                existing = local_cur.fetchone()
-                if existing:
-                    existing_id = existing[0] if isinstance(existing, (tuple, list)) else existing["record_id"]
-                    local_cur.execute("""
-                    UPDATE final_inspections
-                    SET grade = ?, result_code = ?, tester_name = ?, tested_at = CURRENT_TIMESTAMP
-                    WHERE record_id = ?
-                    """, (grade, grade, tester_name, existing_id))
-                    local_conn.commit()
-                    record_id = existing_id
-                    action = "Updated existing grade in"
-                else:
-                    local_cur.execute("""
-                    INSERT INTO final_inspections (module_id, grade, result_code, tester_name)
-                    VALUES (?, ?, ?, ?)
-                    """, (module_id, grade, grade, tester_name))
-                    local_conn.commit()
-                    record_id = local_cur.lastrowid
-                    action = "Inserted initial grade into"
+                local_cur.execute("""
+                INSERT INTO final_inspections (module_id, grade, result_code, tester_name)
+                VALUES (?, ?, ?, ?)
+                """, (module_id, grade, grade, tester_name))
+                local_conn.commit()
+                record_id = local_cur.lastrowid
+                action = "Inserted grade into"
 
             dest_str = f"MSSQL ({mssql_engine})" if mssql_success else "SQLite (Local Cache)"
             print(f"[DB Sync] {action} Final_Inspections [{dest_str}]: {module_id} -> Grade [{grade}] (Code: {grade}) by {tester_name} (Local ID #{record_id})")

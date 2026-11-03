@@ -190,6 +190,10 @@ const dom = {
   historyTbody: document.getElementById('history-tbody'),
   emptyHistoryState: document.getElementById('empty-history-state'),
   whiteboardNotationPreview: document.getElementById('whiteboard-notation-preview'),
+  gradingHistoryBadge: document.getElementById('grading-history-badge'),
+  gradingHistoryTbody: document.getElementById('grading-history-tbody'),
+  emptyGradingHistoryState: document.getElementById('empty-grading-history-state'),
+  btnRefreshGradingHistory: document.getElementById('btn-refresh-grading-history'),
   inspectionFrame: document.getElementById('inspection-frame'),
   stageMatrixWrapper: document.getElementById('stage-matrix-wrapper'),
   axisHeaderX: document.getElementById('axis-header-x'),
@@ -332,11 +336,22 @@ function initApp() {
   updateSummaryAndHistory();
   renderDefectPins();
 
-  // Load initial EL image for front side
-  loadInspectionImage(state.moduleId, 'front');
+  // Check URL parameters for direct module load (e.g. from database.html)
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlModule = urlParams.get('module') || urlParams.get('serial') || urlParams.get('sn') || urlParams.get('id');
+  if (urlModule) {
+    const cleanMod = urlModule.trim().toUpperCase().slice(0, 16);
+    state.moduleId = cleanMod;
+    if (dom.moduleIdInput) dom.moduleIdInput.value = cleanMod;
+    if (dom.summaryModuleId) dom.summaryModuleId.textContent = cleanMod;
+    if (dom.scannerField) dom.scannerField.classList.remove('highlight-error');
+    loadInspectionImage(cleanMod, 'front');
+  } else {
+    // Load initial EL image for front side
+    loadInspectionImage(state.moduleId, 'front');
+  }
 
   // Initialize View Mode (defaults to 'split' Unified 1-screen console)
-  const urlParams = new URLSearchParams(window.location.search);
   const initialMode = urlParams.get('view') || urlParams.get('mode') || localStorage.getItem('fvi_view_mode') || 'split';
   const initialRatio = urlParams.get('ratio') || localStorage.getItem('fvi_split_ratio') || 'visual-max';
   setSplitRatio(initialRatio);
@@ -345,6 +360,12 @@ function initApp() {
 
   // Initial synchronization with Monitor 2 & Integrated Telemetry
   broadcastModuleChange(state.moduleId);
+
+  // Load and subscribe to Grading History (time descending order)
+  fetchGradingHistory();
+  setInterval(() => {
+    fetchGradingHistory();
+  }, 10000);
 }
 
 /**
@@ -1206,6 +1227,134 @@ function updateSummaryAndHistory() {
 }
 
 // Grade Mapping: MES Database Numeric Standard (0=A, 1=B, 2=Retest/Rework, 3=Reject)
+/**
+ * Safely escape HTML characters
+ */
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Format timestamp to short HH:MM:SS
+ */
+function formatTimeShort(dateStr) {
+  if (!dateStr) return '--:--';
+  try {
+    const cleanStr = String(dateStr).replace(' ', 'T');
+    const d = new Date(cleanStr);
+    if (!isNaN(d.getTime())) {
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    }
+  } catch (e) {}
+  return String(dateStr).slice(11, 19) || String(dateStr).slice(0, 10);
+}
+
+/**
+ * Get grade display metadata (letter, label, CSS class)
+ */
+function getGradeDisplayInfo(rawGrade) {
+  const g = String(rawGrade ?? '').trim().toUpperCase();
+  if (g === '0' || g === 'A') {
+    return { letter: 'A', label: 'Prime', cls: 'gh-grade-a' };
+  } else if (g === '1' || g === 'B') {
+    return { letter: 'B', label: 'Secondary', cls: 'gh-grade-b' };
+  } else if (g === '2' || g === 'R' || g === 'RW' || g === 'RT' || g.includes('REWORK') || g.includes('RETEST')) {
+    return { letter: 'RETEST', label: 'Retest / Rework', cls: 'gh-grade-r' };
+  } else if (g === '3' || g === 'X' || g.includes('REJECT')) {
+    return { letter: 'REJECT', label: 'Reject', cls: 'gh-grade-x' };
+  }
+  return { letter: g || '?', label: 'Pending', cls: 'gh-grade-pending' };
+}
+
+/**
+ * Fetches recent grading submissions from server (/api/inspections?limit=50)
+ * ordered by tested_at DESC and renders them in the bottom half of the left dock.
+ */
+function fetchGradingHistory() {
+  fetch(`${config.apiBaseUrl}/api/inspections?limit=50`)
+    .then(res => res.json())
+    .then(data => {
+      const records = data.records || data.inspection || [];
+      renderGradingHistory(records);
+    })
+    .catch(err => {
+      console.warn('[FVI History] Could not load grading history:', err);
+    });
+}
+
+/**
+ * Renders grading records into the grading history table
+ */
+function renderGradingHistory(records) {
+  if (!dom.gradingHistoryTbody) return;
+
+  const count = (records && records.length) || 0;
+  if (dom.gradingHistoryBadge) {
+    dom.gradingHistoryBadge.textContent = count;
+  }
+
+  dom.gradingHistoryTbody.innerHTML = '';
+
+  if (count === 0) {
+    if (dom.emptyGradingHistoryState) {
+      dom.emptyGradingHistoryState.style.display = 'flex';
+    }
+    return;
+  }
+
+  if (dom.emptyGradingHistoryState) {
+    dom.emptyGradingHistoryState.style.display = 'none';
+  }
+
+  const frag = document.createDocumentFragment();
+
+  records.forEach(rec => {
+    const tr = document.createElement('tr');
+    tr.className = 'history-row grading-history-row';
+    const serial = rec.module_id || 'UNKNOWN';
+    const timeFormatted = formatTimeShort(rec.tested_at);
+    const gradeInfo = getGradeDisplayInfo(rec.grade || rec.result_code);
+    const tester = rec.tester_name || 'Inspector';
+    const defects = rec.defect_count ? `${rec.defect_count} defect(s)` : 'No defects';
+
+    tr.title = `Module: ${serial}\nGrade: [${gradeInfo.letter}] ${gradeInfo.label}\nTested: ${rec.tested_at || 'Recently'}\nOperator: ${tester}\n${defects}\nClick to load module`;
+    tr.dataset.module = serial;
+
+    tr.innerHTML = `
+      <td class="gh-time" title="${escapeHtml(rec.tested_at || '')}">${escapeHtml(timeFormatted)}</td>
+      <td>
+        <span class="gh-serial" title="Click to inspect ${escapeHtml(serial)}">
+          ${escapeHtml(serial)}
+        </span>
+      </td>
+      <td style="text-align: right;">
+        <span class="gh-grade-pill ${gradeInfo.cls}">${escapeHtml(gradeInfo.letter)}</span>
+      </td>
+    `;
+
+    // Click handler to load module when clicked
+    tr.addEventListener('click', () => {
+      if (dom.moduleIdInput) {
+        dom.moduleIdInput.value = serial;
+        dom.moduleIdInput.focus();
+        if (dom.scannerField) dom.scannerField.classList.remove('highlight-error');
+        loadInspectionImage(serial, 'front');
+        showToast(`Loaded module ${serial} from history`, 'info');
+      }
+    });
+
+    frag.appendChild(tr);
+  });
+
+  dom.gradingHistoryTbody.appendChild(frag);
+}
+
 const GRADE_NUMERIC_MAP = {
   'A': '0',
   'B': '1',
@@ -1778,14 +1927,157 @@ function attachEventListeners() {
     frameObserver.observe(dom.inspectionFrame);
   }
 
+  // Helper to extract a module serial number from text
+  function extractModuleSerial(text) {
+    if (!text || typeof text !== 'string') return null;
+    const trimmed = text.trim();
+    if (/^USM/i.test(trimmed)) {
+      return trimmed.toUpperCase().slice(0, 16);
+    }
+    const match = trimmed.match(/\b(USM[A-Z0-9]{13})\b/i);
+    if (match) {
+      return match[1].toUpperCase();
+    }
+    return null;
+  }
+
+  /**
+   * Automatic Serial Number Paste Routing:
+   * When a module serial number (e.g. starting with "USM") is pasted anywhere on the page,
+   * automatically redirect it straight into the Module Serial Number input box!
+   * Even if the user accidentally has focus on the notes field, defect search field, or body,
+   * it prevents polluting that other input and sets the serial number cleanly.
+   */
+  window.addEventListener('paste', (e) => {
+    const clipboardData = e.clipboardData || window.clipboardData;
+    if (!clipboardData) return;
+    const rawText = clipboardData.getData('text');
+    const detectedSerial = extractModuleSerial(rawText);
+
+    if (detectedSerial) {
+      // Prevent pasting into unintended input fields (such as defect notes or defect search)
+      if (document.activeElement !== dom.moduleIdInput) {
+        e.preventDefault();
+      }
+
+      if (dom.moduleIdInput) {
+        dom.moduleIdInput.value = detectedSerial;
+        dom.moduleIdInput.focus();
+        dom.moduleIdInput.setSelectionRange(detectedSerial.length, detectedSerial.length);
+        dom.moduleIdInput.dispatchEvent(new Event('input', { bubbles: true }));
+        dom.moduleIdInput.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+
+      if (dom.scannerField) {
+        dom.scannerField.classList.remove('highlight-error');
+      }
+
+      state.moduleId = detectedSerial;
+      dom.summaryModuleId.textContent = detectedSerial || 'Pending Serial';
+      broadcastModuleChange(detectedSerial);
+
+      // Close defect bubble if open
+      closeComicBubble();
+
+      // If full 16-character serial, load calibrated EL image
+      if (detectedSerial.length === 16) {
+        loadInspectionImage(detectedSerial, state.currentSide || 'front');
+      }
+
+      showToast(`Scanned serial automatically routed to Module Serial input: ${detectedSerial}`, 'success');
+      soundFx.beep(880, 0.08);
+    }
+  }, true); // Capture phase ensures we intercept before child inputs consume it
+
+  /**
+   * Barcode Scanner Keyboard Wedge Interceptor:
+   * Many handheld barcode scanners type characters rapidly (e.g. < 70ms between keys) ending in Enter.
+   * If a scan begins with 'USM' while focus is in the wrong input box or on the body,
+   * automatically redirect the input stream to dom.moduleIdInput!
+   */
+  let wedgeBuffer = '';
+  let lastWedgeCharTime = 0;
+
+  window.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+
+    if (e.key === 'Enter') {
+      const trimmedBuffer = wedgeBuffer.trim().toUpperCase();
+      if (trimmedBuffer.length >= 10 && trimmedBuffer.startsWith('USM')) {
+        const fullSerial = trimmedBuffer.slice(0, 16);
+        if (dom.moduleIdInput) {
+          dom.moduleIdInput.value = fullSerial;
+          dom.moduleIdInput.focus();
+        }
+        state.moduleId = fullSerial;
+        dom.summaryModuleId.textContent = fullSerial;
+        if (dom.scannerField) dom.scannerField.classList.remove('highlight-error');
+        broadcastModuleChange(fullSerial);
+        closeComicBubble();
+        if (fullSerial.length === 16) {
+          loadInspectionImage(fullSerial, state.currentSide || 'front');
+        }
+        showToast(`Scanned serial captured: ${fullSerial}`, 'success');
+        soundFx.beep(880, 0.08);
+        e.preventDefault();
+      }
+      wedgeBuffer = '';
+      return;
+    }
+
+    if (e.key.length !== 1) return;
+
+    const now = Date.now();
+    const isFast = (now - lastWedgeCharTime) < 90;
+    lastWedgeCharTime = now;
+
+    if (!isFast && now - lastWedgeCharTime > 300) {
+      wedgeBuffer = '';
+    }
+
+    wedgeBuffer += e.key;
+
+    // If stream begins with 'USM' and active element is NOT moduleIdInput:
+    if (/^USM$/i.test(wedgeBuffer) && document.activeElement !== dom.moduleIdInput) {
+      // Remove any leaked 'u' or 's' from the accidental active input
+      if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
+        const el = document.activeElement;
+        if (el.value.toLowerCase().endsWith('us')) {
+          el.value = el.value.slice(0, -2);
+        } else if (el.value.toLowerCase().endsWith('u')) {
+          el.value = el.value.slice(0, -1);
+        }
+      }
+
+      if (dom.moduleIdInput) {
+        dom.moduleIdInput.focus();
+        dom.moduleIdInput.value = 'USM';
+        state.moduleId = 'USM';
+        dom.summaryModuleId.textContent = 'USM';
+        if (dom.scannerField) dom.scannerField.classList.remove('highlight-error');
+      }
+      e.preventDefault();
+    }
+  }, true);
+
   // Module ID syncing
   dom.moduleIdInput.addEventListener('input', (e) => {
     if (dom.scannerField) {
       dom.scannerField.classList.remove('highlight-error');
     }
-    state.moduleId = e.target.value.trim();
+    state.moduleId = e.target.value.trim().toUpperCase();
     dom.summaryModuleId.textContent = state.moduleId || 'Pending Serial';
     broadcastModuleChange(state.moduleId);
+  });
+
+  dom.moduleIdInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const serial = dom.moduleIdInput.value.trim().toUpperCase();
+      if (serial.length === 16 && serial.startsWith('USM')) {
+        loadInspectionImage(serial, state.currentSide || 'front');
+        showToast(`Loaded module: ${serial}`, 'info');
+      }
+    }
   });
 
   // Grade Buttons Toggle: [ A ] [ B ] [ X ]
@@ -2079,6 +2371,15 @@ function attachEventListeners() {
     }
   });
 
+  // Refresh Grading History Button
+  if (dom.btnRefreshGradingHistory) {
+    dom.btnRefreshGradingHistory.addEventListener('click', () => {
+      fetchGradingHistory();
+      showToast('Refreshed grading history', 'info');
+      soundFx.beep(600, 0.05);
+    });
+  }
+
   // Toolbar: Toggle Always Show Grid
   dom.toggleKeepGrid.addEventListener('change', (e) => {
     state.isGridLocked = e.target.checked;
@@ -2302,6 +2603,7 @@ function attachEventListeners() {
       .then(data => {
         showToast(`Module ${submittedModuleId} submitted as Grade [${submittedGrade}]!`, 'success');
         resetAfterSubmit();
+        fetchGradingHistory();
         soundFx.beep(950, 0.12);
         if (dom.pillDbStatus) {
           dom.pillDbStatus.className = 'status-indicator-pill status-live';
