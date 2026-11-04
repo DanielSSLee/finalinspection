@@ -209,7 +209,6 @@ const dom = {
   reticleLineV: document.getElementById('reticle-line-v'),
   hoverTooltip: document.getElementById('hover-tooltip'),
   liveCoordIndicator: document.getElementById('live-coord-indicator'),
-  cursorPosReadout: document.getElementById('cursor-pos-readout'),
   toggleKeepGrid: document.getElementById('toggle-keep-grid'),
   btnToggleInvert: document.getElementById('btn-toggle-invert'),
   btnResetZoom: document.getElementById('btn-reset-zoom'),
@@ -2205,7 +2204,6 @@ function attachEventListeners() {
     }
     dom.hoverTooltip.style.display = 'none';
     dom.liveCoordIndicator.textContent = 'Hover image to view grid';
-    dom.cursorPosReadout.textContent = 'Cursor: Outside stage';
     updateAxisHighlights(null, null);
   });
 
@@ -2230,7 +2228,6 @@ function attachEventListeners() {
 
     const cell = pendingMouseMove.targetCell;
     if (!cell) {
-      dom.cursorPosReadout.textContent = `Cursor: X: ${Math.round(x)}px, Y: ${Math.round(y)}px`;
       updateAxisHighlights(null, null);
       dom.hoverTooltip.style.display = 'none';
       return;
@@ -2241,7 +2238,6 @@ function attachEventListeners() {
     const coord = cell.dataset.coord;
 
     dom.liveCoordIndicator.textContent = `Cell: ${row}-${col < 10 ? '0' + col : col} (${coord})`;
-    dom.cursorPosReadout.textContent = `Cell ${coord} [Col ${col}, Row ${row}] &bull; X: ${Math.round(x)}px, Y: ${Math.round(y)}px`;
 
     if (dom.cellComicBubble.style.display !== 'flex') {
       dom.hoverTooltip.style.display = 'flex';
