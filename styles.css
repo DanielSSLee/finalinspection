@@ -522,8 +522,9 @@ h1,
   overflow: hidden;
   height: 100%;
   min-height: 0;
-  width: 320px;
+  width: clamp(240px, 28vw, 320px);
   flex-shrink: 0;
+  transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease, border-width 0.2s ease;
 }
 
 .dock-block {
@@ -2589,12 +2590,11 @@ kbd {
 
 .workbench-shell[data-view="visual"] .console-workspace {
   flex: 1 1 0%;
-  height: calc(100vh - 48px);
+  height: auto;
   min-height: 0;
-  max-height: calc(100vh - 48px);
+  max-height: 100%;
   display: flex;
   overflow: hidden;
-  border-bottom: none;
 }
 
 .workbench-shell[data-view="visual"] .stage-section {
@@ -2621,7 +2621,7 @@ kbd {
 .workbench-shell[data-view="visual"] .sidebar-dock {
   height: 100%;
   min-height: 0;
-  width: 320px;
+  width: clamp(240px, 28vw, 320px);
   flex-shrink: 0;
 }
 
@@ -2871,4 +2871,185 @@ kbd {
 
 .telemetry-collapsed .chevron-split {
   transform: rotate(180deg);
+}
+
+/* ==========================================================================
+   Comprehensive Scalability & Non-16:9 Aspect Ratio Engine
+   Enables seamless side-by-side split screen on one monitor (e.g. 960x1080)
+   ========================================================================== */
+
+/* Collapsed Dock State */
+.sidebar-dock.dock-collapsed {
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-right: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  overflow: hidden !important;
+}
+
+/* Dock Toggle Button in Toolbar */
+.btn-dock-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  color: var(--text-muted);
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  user-select: none;
+}
+
+.btn-dock-toggle:hover {
+  background-color: var(--bg-hover);
+  border-color: var(--color-accent, #38bdf8);
+  color: var(--text-bright);
+}
+
+.btn-dock-toggle.active {
+  background-color: rgba(56, 189, 248, 0.16);
+  border-color: rgba(56, 189, 248, 0.45);
+  color: #38bdf8;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.2);
+}
+
+/* Fluid Inspection Frame & Axis Typography */
+.axis-cell-x,
+.axis-cell-y {
+  font-size: clamp(0.55rem, 0.85vw, 0.72rem);
+}
+
+/* Responsive Comic Speech Bubble */
+.cell-comic-bubble {
+  width: clamp(260px, 92vw, 320px);
+  max-width: calc(100% - 16px);
+  max-height: calc(100% - 16px);
+  box-sizing: border-box;
+}
+
+/* Breakpoint 1: Medium Screens & Narrow Windows (< 1400px) */
+@media (max-width: 1400px) {
+  .grade-text {
+    display: none !important;
+  }
+  .grade-toggle {
+    padding: 4px 8px;
+    gap: 2px;
+  }
+  .scanner-field input {
+    width: clamp(120px, 12vw, 160px);
+  }
+  .operator-profile-name {
+    max-width: clamp(80px, 10vw, 130px);
+  }
+  .station-title {
+    font-size: 1.05rem;
+  }
+}
+
+/* Breakpoint 2: Snapped Half-Screen / Split-Monitor Zone (< 1150px) */
+@media (max-width: 1150px) {
+  .console-header {
+    flex-wrap: wrap;
+    min-height: auto;
+    padding: 6px 12px;
+    gap: 6px 10px;
+  }
+
+  .station-identity {
+    gap: 6px;
+  }
+  .station-title {
+    font-size: 0.95rem;
+  }
+  #pill-mqtt-status,
+  #pill-sim-trigger {
+    display: none !important;
+  }
+
+  .action-segment {
+    margin-left: auto;
+  }
+  .action-segment #btn-view-database span,
+  .action-segment #btn-launch-telemetry span {
+    display: none !important;
+  }
+  .action-segment #btn-save-inspection span {
+    font-size: 0.78rem;
+  }
+
+  .view-mode-btn span {
+    display: none !important;
+  }
+  .view-mode-btn {
+    padding: 4px 7px;
+  }
+
+  .stage-toolbar {
+    padding: 4px 8px;
+    gap: 6px;
+  }
+  .el-example-notice span {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .btn-side-toggle {
+    padding: 3px 6px;
+  }
+  .btn-side-toggle span:last-child {
+    font-size: 0.68rem;
+  }
+
+  /* Compact Dock Table Styles on Split Windows */
+  .history-table th,
+  .history-table td,
+  .grading-history-table th,
+  .grading-history-table td {
+    padding: 4px 5px;
+    font-size: 0.72rem;
+  }
+  .defect-name-cell {
+    max-width: 95px;
+  }
+  .gh-serial {
+    font-size: 0.70rem;
+  }
+  .gh-time {
+    font-size: 0.65rem;
+  }
+  .gh-grade-pill {
+    font-size: 0.62rem;
+    padding: 1px 4px;
+    min-width: 20px;
+  }
+}
+
+/* Breakpoint 3: Very Compact Windows (< 850px) */
+@media (max-width: 850px) {
+  .console-header {
+    padding: 5px 8px;
+    gap: 4px 8px;
+  }
+  .el-example-notice {
+    display: none !important;
+  }
+  .stage-heading {
+    display: none !important;
+  }
+  .scanner-field input {
+    width: 110px;
+    font-size: 0.72rem;
+  }
 }

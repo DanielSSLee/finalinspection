@@ -194,6 +194,9 @@ const dom = {
   gradingHistoryTbody: document.getElementById('grading-history-tbody'),
   emptyGradingHistoryState: document.getElementById('empty-grading-history-state'),
   btnRefreshGradingHistory: document.getElementById('btn-refresh-grading-history'),
+  sidebarDock: document.querySelector('.sidebar-dock'),
+  btnToggleDock: document.getElementById('btn-toggle-dock'),
+  dockToggleLabel: document.getElementById('dock-toggle-label'),
   inspectionFrame: document.getElementById('inspection-frame'),
   stageMatrixWrapper: document.getElementById('stage-matrix-wrapper'),
   axisHeaderX: document.getElementById('axis-header-x'),
@@ -1819,19 +1822,47 @@ function updateStageRect() {
  * Dynamically fits the 1024:558 EL image and 24x6 grid so that 100% of the image,
  * coordinates, and Row F are completely visible without ANY vertical clipping.
  */
+function toggleSidebarDock(forceState) {
+  if (!dom.sidebarDock) return;
+  const isCurrentlyCollapsed = dom.sidebarDock.classList.contains('dock-collapsed');
+  const shouldCollapse = forceState !== undefined ? forceState : !isCurrentlyCollapsed;
+
+  dom.sidebarDock.classList.toggle('dock-collapsed', shouldCollapse);
+
+  if (dom.btnToggleDock) {
+    dom.btnToggleDock.classList.toggle('active', !shouldCollapse);
+    if (dom.dockToggleLabel) {
+      dom.dockToggleLabel.textContent = shouldCollapse ? 'Show Dock' : 'Dock';
+    }
+  }
+
+  // Refit inspection stage immediately and after transition
+  fitInspectionStage();
+  requestAnimationFrame(() => {
+    fitInspectionStage();
+  });
+  setTimeout(() => {
+    fitInspectionStage();
+    window.dispatchEvent(new Event('resize'));
+  }, 240);
+}
+
 function fitInspectionStage() {
   if (!dom.inspectionFrame || !dom.imageStage) return;
 
   const frameRect = dom.inspectionFrame.getBoundingClientRect();
   if (frameRect.width <= 0 || frameRect.height <= 0) return;
 
-  const padX = 24;
-  const padY = 16;
-  const axisYWidth = 28;
-  const axisTotalXHeight = 40; // 20px top axis + 20px bottom mirror axis
+  // Responsive padding: maximize EL matrix area on split/narrow screens
+  const isNarrow = frameRect.width < 750;
+  const isShort = frameRect.height < 500;
+  const padX = isNarrow ? 8 : (frameRect.width < 1100 ? 14 : 20);
+  const padY = isShort ? 6 : (frameRect.height < 750 ? 10 : 14);
+  const axisYWidth = isNarrow ? 22 : 28;
+  const axisTotalXHeight = isShort ? 32 : 38;
 
-  const availW = Math.max(120, frameRect.width - padX);
-  const availH = Math.max(100, frameRect.height - padY);
+  const availW = Math.max(80, frameRect.width - padX);
+  const availH = Math.max(60, frameRect.height - padY);
 
   const maxStageW = availW - axisYWidth;
   const maxStageH = availH - axisTotalXHeight;
@@ -1848,8 +1879,8 @@ function fitInspectionStage() {
     stageW = stageH * targetAspect;
   }
 
-  stageW = Math.floor(stageW);
-  stageH = Math.floor(stageH);
+  stageW = Math.max(80, Math.floor(stageW));
+  stageH = Math.max(44, Math.floor(stageH));
 
   dom.imageStage.style.width = `${stageW}px`;
   dom.imageStage.style.height = `${stageH}px`;
@@ -1868,11 +1899,14 @@ function fitInspectionStage() {
   }
   if (dom.axisHeaderX) {
     dom.axisHeaderX.style.width = `${totalW}px`;
+    dom.axisHeaderX.style.paddingLeft = `${axisYWidth}px`;
   }
   if (dom.axisFooterX) {
     dom.axisFooterX.style.width = `${totalW}px`;
+    dom.axisFooterX.style.paddingLeft = `${axisYWidth}px`;
   }
   if (dom.axisHeaderY) {
+    dom.axisHeaderY.style.width = `${axisYWidth}px`;
     // 97.491% matches active cell rows A-F (excluding bottom timestamp text)
     dom.axisHeaderY.style.height = `${Math.floor(stageH * 0.97491)}px`;
   }
@@ -2380,6 +2414,13 @@ function attachEventListeners() {
     });
   }
 
+  // Toggle Sidebar Dock (for scalable side-by-side monitor layouts)
+  if (dom.btnToggleDock) {
+    dom.btnToggleDock.addEventListener('click', () => {
+      toggleSidebarDock();
+    });
+  }
+
   // Toolbar: Toggle Always Show Grid
   dom.toggleKeepGrid.addEventListener('change', (e) => {
     state.isGridLocked = e.target.checked;
@@ -2453,6 +2494,13 @@ function attachEventListeners() {
     }
 
     const key = e.key.toUpperCase();
+
+    // Hotkey [ or ] or D: Toggle Defects & Grading History Dock
+    if (e.key === '[' || e.key === ']' || key === 'D') {
+      e.preventDefault();
+      toggleSidebarDock();
+      return;
+    }
 
     // Hotkey F: Flip Front / Back Side View
     if (key === 'F') {
