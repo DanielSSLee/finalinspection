@@ -20,6 +20,7 @@ import ftplib
 import hashlib
 import mimetypes
 import threading
+from datetime import datetime, timezone
 from urllib.parse import urlparse, parse_qs
 try:
     from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -1087,6 +1088,10 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                 else:
                     cursor.execute("SELECT * FROM final_inspection_defects ORDER BY record_id DESC LIMIT 100")
                 rows = [dict(r) for r in cursor.fetchall()]
+                for r in rows:
+                    t = r.get("tested_at")
+                    if t and isinstance(t, str) and not t.endswith("Z") and not ("+" in t or "-" in t[10:]):
+                        r["tested_at"] = t.replace(" ", "T") + "Z"
             self.send_json(200, {"defects": rows})
             return
 
@@ -1117,6 +1122,10 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                     """, (mod_id,))
                     row = cursor.fetchone()
                     data = dict(row) if row else None
+                    if data and data.get("tested_at"):
+                        t = data["tested_at"]
+                        if isinstance(t, str) and not t.endswith("Z") and not ("+" in t or "-" in t[10:]):
+                            data["tested_at"] = t.replace(" ", "T") + "Z"
                     self.send_json(200, {"inspection": data, "records": [data] if data else []})
                     return
                 else:
@@ -1166,6 +1175,10 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
 
                     cursor.execute(sql, tuple(params))
                     rows = [dict(r) for r in cursor.fetchall()]
+                    for r in rows:
+                        t = r.get("tested_at")
+                        if t and isinstance(t, str) and not t.endswith("Z") and not ("+" in t or "-" in t[10:]):
+                            r["tested_at"] = t.replace(" ", "T") + "Z"
 
                     # Compute live summary metrics
                     cursor.execute("""

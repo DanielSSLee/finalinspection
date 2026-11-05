@@ -1122,11 +1122,32 @@
       return GRADE_MAP[g] || { letter: g, name: `Grade ${g}`, code: g, class: 'grade-a' };
     }
 
+    function parseUtcDate(dateStr) {
+      if (!dateStr) return null;
+      let s = String(dateStr).trim();
+      if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(s) && !s.endsWith('Z') && !/[+-]\d{2}:?\d{2}$/.test(s)) {
+        s = s.replace(' ', 'T') + 'Z';
+      }
+      const d = new Date(s);
+      return isNaN(d.getTime()) ? null : d;
+    }
+
+    function formatLocalDateTime(dateStr) {
+      if (!dateStr) return 'Just now';
+      const d = parseUtcDate(dateStr);
+      if (!d) return dateStr;
+      const yr = d.getFullYear();
+      const mo = String(d.getMonth() + 1).padStart(2, '0');
+      const da = String(d.getDate()).padStart(2, '0');
+      const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+      return `${yr}-${mo}-${da} ${time}`;
+    }
+
     function formatRelativeTime(dateStr) {
       if (!dateStr) return '';
       try {
-        const d = new Date(dateStr.replace(' ', 'T'));
-        if (isNaN(d.getTime())) return '';
+        const d = parseUtcDate(dateStr);
+        if (!d) return '';
         const now = new Date();
         const diffMs = now - d;
         const diffSec = Math.floor(diffMs / 1000);
@@ -1309,7 +1330,7 @@
           </td>
           <td>
             <div class="time-cell">
-              <span class="time-abs">${item.tested_at || 'Just now'}</span>
+              <span class="time-abs">${formatLocalDateTime(item.tested_at)}</span>
               ${relTime ? `<span class="time-rel">${relTime}</span>` : ''}
             </div>
           </td>
@@ -1398,7 +1419,7 @@
                 <strong style="color: #ffffff;">${type}</strong>
               </div>
               <div style="font-size: 0.75rem; color: var(--text-dim); font-family: var(--font-mono);">
-                ${time}
+                ${formatLocalDateTime(time)}
               </div>
             </div>
           `;

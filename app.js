@@ -1239,12 +1239,21 @@ function escapeHtml(str) {
 /**
  * Format timestamp to short HH:MM:SS
  */
+function parseUtcDate(dateStr) {
+  if (!dateStr) return null;
+  let s = String(dateStr).trim();
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(s) && !s.endsWith('Z') && !/[+-]\d{2}:?\d{2}$/.test(s)) {
+    s = s.replace(' ', 'T') + 'Z';
+  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 function formatTimeShort(dateStr) {
   if (!dateStr) return '--:--';
   try {
-    const cleanStr = String(dateStr).replace(' ', 'T');
-    const d = new Date(cleanStr);
-    if (!isNaN(d.getTime())) {
+    const d = parseUtcDate(dateStr);
+    if (d) {
       return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
     }
   } catch (e) {}

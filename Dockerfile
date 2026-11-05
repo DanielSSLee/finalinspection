@@ -10,6 +10,7 @@ ENV PYTHONUNBUFFERED=1
 # Install system dependencies if needed
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # Install python dependencies
