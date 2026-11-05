@@ -209,9 +209,7 @@ const dom = {
   reticleLineV: document.getElementById('reticle-line-v'),
   hoverTooltip: document.getElementById('hover-tooltip'),
   liveCoordIndicator: document.getElementById('live-coord-indicator'),
-  toggleKeepGrid: document.getElementById('toggle-keep-grid'),
   btnToggleInvert: document.getElementById('btn-toggle-invert'),
-  btnResetZoom: document.getElementById('btn-reset-zoom'),
   elImage: document.getElementById('el-image'),
   selectElSample: document.getElementById('select-el-sample'),
   inputCustomImage: document.getElementById('input-custom-image'),
@@ -220,8 +218,6 @@ const dom = {
   // Front / Back Side Switcher & Badges
   btnSideFront: document.getElementById('btn-side-front'),
   btnSideBack: document.getElementById('btn-side-back'),
-  stageSideBadge: document.getElementById('stage-side-badge'),
-  stageSideBadgeText: document.getElementById('stage-side-badge-text'),
   bubbleSideBadge: document.getElementById('bubble-side-badge'),
   bubbleSearchInput: document.getElementById('bubble-search-input'),
   btnClearSearch: document.getElementById('btn-clear-search'),
@@ -461,14 +457,14 @@ function checkBackendHealth() {
       state.isServerOnline = true;
       if (dom.pillDbStatus) {
         dom.pillDbStatus.className = 'status-indicator-pill status-live';
-        dom.pillDbStatus.innerHTML = '<span class="status-pip"></span><span>DB LIVE</span>';
+        dom.pillDbStatus.innerHTML = '<span>DB LIVE</span>';
       }
     })
     .catch(() => {
       state.isServerOnline = false;
       if (dom.pillDbStatus) {
         dom.pillDbStatus.className = 'status-indicator-pill status-warn';
-        dom.pillDbStatus.innerHTML = '<span class="status-pip"></span><span>STANDALONE</span>';
+        dom.pillDbStatus.innerHTML = '<span>STANDALONE</span>';
       }
     });
 }
@@ -485,7 +481,7 @@ function initConveyorEventStream() {
       state.isMqttConnected = true;
       if (dom.pillMqttStatus) {
         dom.pillMqttStatus.className = 'status-indicator-pill status-live';
-        dom.pillMqttStatus.innerHTML = '<span class="status-pip"></span><span>MQTT LIVE</span>';
+        dom.pillMqttStatus.innerHTML = '<span>MQTT LIVE</span>';
       }
     };
 
@@ -502,13 +498,13 @@ function initConveyorEventStream() {
       state.isMqttConnected = false;
       if (dom.pillMqttStatus) {
         dom.pillMqttStatus.className = 'status-indicator-pill status-warn';
-        dom.pillMqttStatus.innerHTML = '<span class="status-pip"></span><span>MQTT SIM</span>';
+        dom.pillMqttStatus.innerHTML = '<span>MQTT SIM</span>';
       }
     };
   } catch (err) {
     if (dom.pillMqttStatus) {
       dom.pillMqttStatus.className = 'status-indicator-pill status-warn';
-      dom.pillMqttStatus.innerHTML = '<span class="status-pip"></span><span>MQTT SIM</span>';
+      dom.pillMqttStatus.innerHTML = '<span>MQTT SIM</span>';
     }
   }
 }
@@ -737,7 +733,7 @@ function buildCoordinateGrid() {
       cell.dataset.col = col;
       cell.setAttribute('role', 'button');
       cell.setAttribute('tabindex', '0');
-      cell.setAttribute('aria-label', `Cell ${row}-${col}`);
+      cell.setAttribute('aria-label', `Cell ${coord}`);
       fragGrid.appendChild(cell);
 
       const pinSlot = document.createElement('div');
@@ -768,7 +764,7 @@ function updateDefectPin(coord) {
     const isCurrentSide = !defect.side || defect.side === state.currentSide || defect.side === 'both';
     const sideClass = (defect.side || 'front').toLowerCase();
 
-    marker.className = `defect-marker marker-${prefix} marker-side-${sideClass} ${isCurrentSide ? '' : 'marker-other-side'}`;
+    marker.className = `defect-marker ${isCurrentSide ? '' : 'marker-other-side'}`;
     marker.textContent = defect.defectCode;
     const sideText = sideClass === 'back' ? 'BACK' : 'FRONT';
     marker.title = `${coord}: [${defect.defectCode}] ${defect.defectName} (${sideText} SIDE)`;
@@ -875,7 +871,7 @@ function renderDefectReasonItems() {
   matchingDefects.forEach(defect => {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = `bubble-reason-item side-${defect.side} ${state.selectedDefectCode === defect.code ? 'selected' : ''}`;
+    btn.className = `bubble-reason-item ${state.selectedDefectCode === defect.code ? 'selected' : ''}`;
     btn.dataset.code = defect.code;
     btn.dataset.side = defect.side;
 
@@ -945,7 +941,7 @@ function openComicBubble(coord, row, col) {
 
   soundFx.beep(750, 0.05);
 
-  dom.bubbleCellCoord.textContent = `CELL ${row}-${col < 10 ? '0' + col : col} (${coord})`;
+  dom.bubbleCellCoord.textContent = `CELL ${coord}`;
   if (dom.bubbleSideBadge) {
     dom.bubbleSideBadge.className = `bubble-side-badge ${state.currentSide}`;
     dom.bubbleSideBadge.textContent = state.currentSide === 'front' ? 'FRONT SIDE' : 'BACK SIDE';
@@ -1130,9 +1126,9 @@ function persistDefectToDatabase(defect) {
     .then(data => {
       if (data.success && dom.pillDbStatus) {
         dom.pillDbStatus.className = 'status-indicator-pill status-live';
-        dom.pillDbStatus.innerHTML = `<span class="status-pip"></span><span>DEFECT #${data.record_id || ''}</span>`;
+        dom.pillDbStatus.innerHTML = `<span>DEFECT #${data.record_id || ''}</span>`;
         setTimeout(() => {
-          dom.pillDbStatus.innerHTML = '<span class="status-pip"></span><span>DB LIVE</span>';
+          dom.pillDbStatus.innerHTML = '<span>DB LIVE</span>';
         }, 2000);
       }
     })
@@ -1194,13 +1190,11 @@ function updateSummaryAndHistory() {
 
       const tr = document.createElement('tr');
       tr.className = 'history-row';
-      tr.title = `Click to focus cell on inspection stage (${sideText} SIDE)`;
+      tr.title = `${defect.coord}: [${defect.defectCode}] ${defect.defectName} (${sideText} SIDE) - Click to focus`;
       tr.innerHTML = `
         <td><span class="cell-pill">${defect.coord}</span></td>
-        <td><span class="side-pill side-${sideClass}">${sideText}</span></td>
-        <td><span class="code-pill code-${defect.defectCode.charAt(0).toLowerCase()}">${defect.defectCode}</span></td>
-        <td class="defect-name-cell" title="${defect.defectName} (${defect.category || 'Visual'})">${defect.defectName}</td>
-        <td><span class="grade-options-pill" title="Allowed: ${defect.rawGrades}">${defect.rawGrades}</span></td>
+        <td><span class="side-pill">${sideText}</span></td>
+        <td><span class="code-pill" title="${defect.defectName} (${defect.category || 'Visual'})">${defect.defectCode}</span></td>
         <td class="text-right">
           <button type="button" class="btn-delete-row" data-delete-coord="${defect.coord}" title="Delete defect">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1278,6 +1272,54 @@ function getGradeDisplayInfo(rawGrade) {
  * Fetches recent grading submissions from server (/api/inspections?limit=50)
  * ordered by tested_at DESC and renders them in the bottom half of the left dock.
  */
+
+/**
+ * Fetches defects for a historical module from server (/api/defects?module_id=...)
+ */
+function fetchModuleDefects(moduleId) {
+  if (!moduleId) return;
+  fetch(`${config.apiBaseUrl}/api/defects?module_id=${encodeURIComponent(moduleId)}`)
+    .then(res => res.json())
+    .then(data => {
+      const defectsList = data.defects || [];
+      state.defects.clear();
+      defectsList.forEach(d => {
+        const coord = d.defect_location || d.defect_cell || d.cell_coord || '';
+        if (!coord) return;
+        const row = coord.charAt(0);
+        const col = parseInt(coord.slice(1), 10);
+        const code = d.defect_code || 'G1';
+        const preset = DEFECT_CATALOG[code] || {
+          code: code,
+          name: d.defect_type || 'Defect',
+          side: d.side || 'front',
+          rawGrades: 'A,B,R',
+          allowedGrades: ['A', 'B', 'X']
+        };
+        state.defects.set(coord, {
+          coord: coord,
+          row: row,
+          col: col,
+          defectCode: preset.code,
+          defectName: preset.name,
+          side: d.side || preset.side || 'front',
+          category: preset.category || 'Visual',
+          rawGrades: preset.rawGrades || 'A,B,R',
+          allowedGrades: preset.allowedGrades || ['A', 'B', 'X'],
+          notes: d.notes || ''
+        });
+      });
+      updateSummaryAndHistory();
+      renderDefectPins();
+      recomputeAllowedGrades();
+    })
+    .catch(() => {
+      state.defects.clear();
+      updateSummaryAndHistory();
+      renderDefectPins();
+    });
+}
+
 function fetchGradingHistory() {
   fetch(`${config.apiBaseUrl}/api/inspections?limit=50`)
     .then(res => res.json())
@@ -1346,7 +1388,10 @@ function renderGradingHistory(records) {
         dom.moduleIdInput.value = serial;
         dom.moduleIdInput.focus();
         if (dom.scannerField) dom.scannerField.classList.remove('highlight-error');
+        state.moduleId = serial;
+        if (dom.summaryModuleId) dom.summaryModuleId.textContent = serial;
         loadInspectionImage(serial, 'front');
+        fetchModuleDefects(serial);
         showToast(`Loaded module ${serial} from history`, 'info');
       }
     });
@@ -1590,9 +1635,9 @@ function persistGradeToDatabase(grade) {
     .then(data => {
       if (data.success && dom.pillDbStatus) {
         dom.pillDbStatus.className = 'status-indicator-pill status-live';
-        dom.pillDbStatus.innerHTML = `<span class="status-pip"></span><span>GRADE [${grade}] SAVED</span>`;
+        dom.pillDbStatus.innerHTML = `<span>GRADE [${grade}] SAVED</span>`;
         setTimeout(() => {
-          dom.pillDbStatus.innerHTML = '<span class="status-pip"></span><span>DB LIVE</span>';
+          dom.pillDbStatus.innerHTML = '<span>DB LIVE</span>';
         }, 2500);
       }
     })
@@ -2008,6 +2053,10 @@ function attachEventListeners() {
       state.moduleId = detectedSerial;
       dom.summaryModuleId.textContent = detectedSerial || 'Pending Serial';
       broadcastModuleChange(detectedSerial);
+      state.defects.clear();
+      resetGrade();
+      updateSummaryAndHistory();
+      renderDefectPins();
 
       // Close defect bubble if open
       closeComicBubble();
@@ -2046,6 +2095,10 @@ function attachEventListeners() {
         dom.summaryModuleId.textContent = fullSerial;
         if (dom.scannerField) dom.scannerField.classList.remove('highlight-error');
         broadcastModuleChange(fullSerial);
+        state.defects.clear();
+        resetGrade();
+        updateSummaryAndHistory();
+        renderDefectPins();
         closeComicBubble();
         if (fullSerial.length === 16) {
           loadInspectionImage(fullSerial, state.currentSide || 'front');
@@ -2237,13 +2290,15 @@ function attachEventListeners() {
     const col = parseInt(cell.dataset.col, 10);
     const coord = cell.dataset.coord;
 
-    dom.liveCoordIndicator.textContent = `Cell: ${row}-${col < 10 ? '0' + col : col} (${coord})`;
+    if (dom.liveCoordIndicator) {
+      dom.liveCoordIndicator.textContent = `Cell ${coord}`;
+    }
 
     if (dom.cellComicBubble.style.display !== 'flex') {
       dom.hoverTooltip.style.display = 'flex';
 
       const existingDefect = state.defects.get(coord);
-      dom.hoverTooltip.querySelector('.tooltip-coord').textContent = `Cell ${row}-${col}`;
+      dom.hoverTooltip.querySelector('.tooltip-coord').textContent = `Cell ${coord}`;
       dom.hoverTooltip.querySelector('.tooltip-status').textContent = existingDefect
         ? `Defect: ${existingDefect.defectCode} (${existingDefect.defectName})`
         : 'Click to select cell';
@@ -2417,13 +2472,6 @@ function attachEventListeners() {
     });
   }
 
-  // Toolbar: Toggle Always Show Grid
-  dom.toggleKeepGrid.addEventListener('change', (e) => {
-    state.isGridLocked = e.target.checked;
-    dom.coordinateGridOverlay.classList.toggle('force-visible', state.isGridLocked);
-    showToast(state.isGridLocked ? 'Grid overlay locked visible' : 'Grid overlay set to hover-only', 'info');
-  });
-
   // Toolbar: Invert EL Image Filter
   dom.btnToggleInvert.addEventListener('click', () => {
     state.isInverted = !state.isInverted;
@@ -2516,8 +2564,15 @@ function attachEventListeners() {
       }
     }
     else if (e.key === 'Enter') {
-      if (dom.cellComicBubble.style.display === 'flex' && !dom.btnBubbleConfirm.disabled) {
-        dom.btnBubbleConfirm.click();
+      if (dom.cellComicBubble && dom.cellComicBubble.style.display === 'flex') {
+        if (!dom.btnBubbleConfirm.disabled) {
+          dom.btnBubbleConfirm.click();
+        }
+      } else {
+        // Submit grade when bubble is closed
+        if (dom.btnSaveInspection) {
+          dom.btnSaveInspection.click();
+        }
       }
     }
     else if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -2540,10 +2595,6 @@ function attachEventListeners() {
     else if (key === 'I') {
       dom.btnToggleInvert.click();
     }
-    else if (key === 'G') {
-      dom.toggleKeepGrid.checked = !dom.toggleKeepGrid.checked;
-      dom.toggleKeepGrid.dispatchEvent(new Event('change'));
-    }
     else if (e.key === 'Escape') {
       if (dom.loginModal.classList.contains('open')) {
         dom.loginModal.classList.remove('open');
@@ -2555,12 +2606,6 @@ function attachEventListeners() {
         closeComicBubble();
       }
     }
-  });
-
-  // Toolbar: Reset View Fit
-  dom.btnResetZoom.addEventListener('click', () => {
-    fitInspectionStage();
-    showToast('Inspection view reset to fit', 'info');
   });
 
   // Submit Grade: Sends Overall Inspection to database table final_inspections
@@ -2651,9 +2696,9 @@ function attachEventListeners() {
         soundFx.beep(950, 0.12);
         if (dom.pillDbStatus) {
           dom.pillDbStatus.className = 'status-indicator-pill status-live';
-          dom.pillDbStatus.innerHTML = `<span class="status-pip"></span><span>GRADE [${submittedGrade}] SAVED</span>`;
+          dom.pillDbStatus.innerHTML = `<span>GRADE [${submittedGrade}] SAVED</span>`;
           setTimeout(() => {
-            dom.pillDbStatus.innerHTML = '<span class="status-pip"></span><span>DB LIVE</span>';
+            dom.pillDbStatus.innerHTML = '<span>DB LIVE</span>';
           }, 2500);
         }
       })

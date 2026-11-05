@@ -168,20 +168,7 @@ body {
   gap: 12px;
 }
 
-/* Station Identity */
-.station-identity {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.brand-glyph {
-  color: var(--text-accent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
+/* Station Identity Removed */
 
 .station-title-wrap {
   display: flex;
@@ -529,7 +516,7 @@ h1,
 
 .dock-block {
   border-bottom: 1px solid var(--border-subtle);
-  padding: 10px 14px;
+  padding: 10px 10px;
 }
 
 .block-header {
@@ -616,28 +603,32 @@ h1,
   border: 1px solid var(--grade-x-border);
 }
 
-/* Defect History Log & Grading History Blocks (50/50 Split Left Dock) */
-.history-block,
-.grading-history-block {
-  flex: 1 1 50%;
-  min-height: 0;
+/* Defect Log & Grading History Blocks (Compact Defects ~34% + Expanded Grading Stream ~66%) */
+.history-block {
+  flex: 0 0 34%;
+  max-height: 38%;
+  min-height: 120px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 8px 12px;
-}
-
-.history-block {
+  padding: 8px 10px;
   border-bottom: 1px solid var(--border-subtle);
 }
 
 .grading-history-block {
+  flex: 1 1 66%;
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 8px 10px;
   border-bottom: none;
 }
 
 .grading-history-wrapper {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   position: relative;
   background-color: var(--bg-input);
   border: 1px solid var(--border-subtle);
@@ -646,28 +637,33 @@ h1,
 
 .grading-history-table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
-  font-size: 0.76rem;
+  font-size: 0.74rem;
   text-align: left;
 }
 
 .grading-history-table th {
-  padding: 5px 6px;
+  padding: 5px 3px;
   background-color: #0e1117;
   color: var(--text-dim);
   font-weight: 700;
-  font-size: 0.70rem;
-  letter-spacing: 0.04em;
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
   position: sticky;
   top: 0;
   z-index: 2;
   border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .grading-history-table td {
-  padding: 5px 6px;
+  padding: 4px 3px;
   border-bottom: 1px solid var(--border-subtle);
   vertical-align: middle;
+  overflow: hidden;
 }
 
 .grading-history-row {
@@ -681,13 +677,14 @@ h1,
 
 .gh-serial {
   font-family: var(--font-mono);
-  font-size: 0.74rem;
+  font-size: 0.72rem;
   font-weight: 600;
   color: #38bdf8;
   letter-spacing: 0.02em;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .gh-time {
@@ -773,6 +770,7 @@ h1,
 .history-table-wrapper {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   position: relative;
   background-color: var(--bg-input);
   border: 1px solid var(--border-subtle);
@@ -781,28 +779,33 @@ h1,
 
 .history-table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   text-align: left;
 }
 
 .history-table th {
-  padding: 6px 8px;
+  padding: 5px 3px;
   background-color: #0e1117;
   color: var(--text-dim);
   font-weight: 700;
-  font-size: 0.72rem;
-  letter-spacing: 0.05em;
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
   position: sticky;
   top: 0;
   z-index: 2;
   border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .history-table td {
-  padding: 5px 8px;
+  padding: 4px 3px;
   border-bottom: 1px solid var(--border-subtle);
   vertical-align: middle;
+  overflow: hidden;
 }
 
 .history-row:hover {
@@ -811,62 +814,53 @@ h1,
 
 .cell-pill {
   font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 700;
   color: var(--text-accent);
   background: var(--bg-selected);
   padding: 2px 5px;
   border-radius: var(--radius-xs);
+  display: inline-block;
+  text-align: center;
 }
 
 .side-pill {
   font-family: var(--font-mono);
   font-size: 0.65rem;
   font-weight: 700;
-  padding: 1px 4px;
+  padding: 2px 5px;
   border-radius: var(--radius-xs);
   letter-spacing: 0.02em;
-}
-
-.side-pill.side-front {
-  background: rgba(239, 68, 68, 0.15);
-  color: #f87171;
-  border: 1px solid rgba(239, 68, 68, 0.35);
-}
-
-.side-pill.side-back {
-  background: rgba(96, 165, 250, 0.15);
-  color: #60a5fa;
-  border: 1px solid rgba(96, 165, 250, 0.35);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-dim);
+  border: 1px solid var(--border-subtle);
+  display: inline-block;
+  text-align: center;
 }
 
 .code-pill {
   font-family: var(--font-mono);
-  font-size: 0.75rem;
-  font-weight: 700;
-  padding: 2px 5px;
+  font-size: 0.74rem;
+  font-weight: 800;
+  padding: 2px 6px;
   border-radius: var(--radius-xs);
+  background: #1e293b;
+  color: #f1f5f9;
+  border: 1px solid #334155;
+  display: inline-block;
+  text-align: center;
 }
 
 .grade-options-pill {
-  font-family: var(--font-mono);
-  font-size: 0.65rem;
-  font-weight: 700;
-  color: var(--accent-gold);
-  background: rgba(245, 158, 11, 0.1);
-  border: 1px solid rgba(245, 158, 11, 0.3);
-  padding: 1px 4px;
-  border-radius: var(--radius-xs);
-  white-space: nowrap;
+  display: none;
 }
 
 .defect-name-cell {
-  font-size: 0.78rem;
+  font-size: 0.74rem;
   color: var(--text-bright);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 130px;
 }
 
 .btn-delete-row {
@@ -894,15 +888,15 @@ h1,
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: 2.5rem 1rem;
+  padding: 1rem 0.5rem;
   color: var(--text-dim);
 }
 
 .empty-title {
-  font-size: 0.85rem;
+  font-size: 0.80rem;
   font-weight: 600;
   color: var(--text-muted);
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .empty-subtitle {
@@ -1027,46 +1021,7 @@ h1,
   box-shadow: 0 0 6px #60a5fa;
 }
 
-/* Floating Stage Side Badge */
-.stage-side-badge {
-  position: absolute;
-  top: 10px;
-  right: 12px;
-  z-index: 15;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: rgba(9, 14, 24, 0.82);
-  border: 1px solid rgba(56, 189, 248, 0.35);
-  backdrop-filter: blur(8px);
-  padding: 3px 9px;
-  border-radius: var(--radius-xs);
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  font-weight: 700;
-  color: var(--text-bright);
-  letter-spacing: 0.05em;
-  user-select: none;
-  pointer-events: none;
-  transition: all var(--transition-fast);
-}
-
-.stage-side-badge .badge-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background-color: #38bdf8;
-  box-shadow: 0 0 6px #38bdf8;
-}
-
-.stage-side-badge.back {
-  border-color: rgba(96, 165, 250, 0.45);
-}
-
-.stage-side-badge.back .badge-dot {
-  background-color: #60a5fa;
-  box-shadow: 0 0 6px #60a5fa;
-}
+/* Stage side indicator handled exclusively by top toolbar toggle */
 
 .stage-status-indicator {
   width: 6px;
@@ -1421,12 +1376,15 @@ h1,
   font-family: var(--font-mono);
   font-size: 0.72rem;
   font-weight: 800;
-  padding: 1px 4px;
+  padding: 1px 5px;
   border-radius: var(--radius-xs);
   line-height: 1;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.85);
   transform: scale(0.9);
   animation: pop-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  background-color: #0f172a;
+  color: #38bdf8;
+  border: 1.5px solid #38bdf8;
 }
 
 @keyframes pop-in {
@@ -1441,41 +1399,8 @@ h1,
   }
 }
 
-.defect-marker.marker-a {
-  background-color: var(--grade-a);
-  color: #064e3b;
-  border: 1px solid #34d399;
-}
-
-.defect-marker.marker-b {
-  background-color: var(--grade-b);
-  color: #78350f;
-  border: 1px solid #fbbf24;
-}
-
-.defect-marker.marker-c {
-  background-color: #f97316;
-  color: #7c2d12;
-  border: 1px solid #fb923c;
-}
-
-.defect-marker.marker-x {
-  background-color: var(--grade-x);
-  color: #ffffff;
-  border: 1px solid #f87171;
-}
-
-.defect-marker.marker-side-front {
-  box-shadow: 0 0 6px rgba(248, 113, 113, 0.4);
-}
-
-.defect-marker.marker-side-back {
-  box-shadow: 0 0 6px rgba(96, 165, 250, 0.4);
-}
-
 .defect-marker.marker-other-side {
   opacity: 0.38 !important;
-  filter: saturate(0.4) !important;
   border-style: dashed !important;
 }
 
@@ -1721,18 +1646,7 @@ h1,
   color: var(--text-bright);
 }
 
-/* Side-specific border styling */
-.bubble-reason-item.side-front {
-  border-left-color: #f87171;
-}
-
-.bubble-reason-item.side-back {
-  border-left-color: #60a5fa;
-}
-
-.bubble-reason-item.side-both {
-  border-left-color: #4ade80;
-}
+/* Uniform neutral defect border */
 
 .reason-code {
   font-family: var(--font-mono);
@@ -2210,10 +2124,7 @@ kbd {
 }
 
 .status-pip {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background-color: currentColor;
+  display: none !important;
 }
 
 /* Operator Profile Badge */
