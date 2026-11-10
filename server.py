@@ -205,6 +205,7 @@ def get_sunsim_telemetry(module_id):
         flash_time = "26-08-22 09:38:36"
         module_model = "144-M10-HC"
         power_bin = "Bin: 540W"
+        tested_at = "2026-08-22T09:38:36Z"
     else:
         seed = int(hashlib.md5(module_id.encode('utf-8')).hexdigest()[:6], 16)
         delta_p = ((seed % 100) - 35) / 10.0
@@ -219,18 +220,21 @@ def get_sunsim_telemetry(module_id):
         flash_time = "26-08-22 09:38:36"
         module_model = "144-M10-HC"
         power_bin = f"Bin: {int(pmax // 5 * 5)}W"
+        tested_at = "2026-08-22T09:38:36Z"
 
-    # Curve points for double-diode model visualization (60V span matching image)
+    # Curve points for double-diode model visualization (60 points from 0V to Voc)
     iv_points = []
     pv_points = []
+    combined_curve = []
     num_pts = 60
     for i in range(num_pts + 1):
         v = round((voc * i) / num_pts, 2)
-        v_norm = v / voc
+        v_norm = v / voc if voc > 0 else 0
         cur_i = round(max(0.0, isc * (1.0 - (v_norm ** 9.6))), 3) if v < voc else 0.0
         p = round(v * cur_i, 1)
-        iv_points.append({"v": v, "i": cur_i})
-        pv_points.append({"v": v, "p": p})
+        iv_points.append({"v": v, "i": cur_i, "p": p})
+        pv_points.append({"v": v, "p": p, "i": cur_i})
+        combined_curve.append({"v": v, "i": cur_i, "p": p})
 
     # Manufacturing Pipeline (5 stations shown in reference image)
     pipeline = [
@@ -309,6 +313,11 @@ def get_sunsim_telemetry(module_id):
         {"sn": module_id or "USM0112208260078", "pmax": pmax, "ff": ff, "bin": power_bin.replace("Bin: ", ""), "status": "PASS", "current": True}
     ]
 
+    pmax_history = [
+        {"sn": item["sn"], "pmax": item["pmax"], "bin": item["bin"], "ff": item["ff"]}
+        for item in run_chart
+    ]
+
     bin_summary = {
         "bins": [
             {"name": "540W", "count": 118, "pct": 76.6, "color": "#06b6d4"},
@@ -325,10 +334,23 @@ def get_sunsim_telemetry(module_id):
         "connection_ready": True,
         "status": "PASS",
         "power_bin": power_bin,
+        "bin": power_bin.replace("Bin: ", ""),
         "module_model": module_model,
+        "model": module_model,
+        "tested_at": tested_at,
+        "pmax": pmax,
+        "voc": voc,
+        "isc": isc,
+        "vmp": vmp,
+        "imp": imp,
+        "ff": ff,
+        "efficiency": eff,
+        "temp": cell_temp,
+        "irradiance": 1000.0,
         "pipeline": pipeline,
         "attributes": attributes,
         "run_chart": run_chart,
+        "pmax_history": pmax_history,
         "bin_summary": bin_summary,
         "parameters": {
             "pmax_w": pmax,
@@ -347,8 +369,9 @@ def get_sunsim_telemetry(module_id):
             "flasher_model": "HALM Class AAA+ LED Flasher (Station 1)",
             "flash_timestamp": flash_time
         },
-        "iv_curve": iv_points,
-        "pv_curve": pv_points
+        "iv_curve": combined_curve,
+        "pv_curve": pv_points,
+        "pmax_curve": combined_curve
     }
 
 def get_hipot_telemetry(module_id):
@@ -387,12 +410,57 @@ def get_hipot_telemetry(module_id):
         ir_mohm = 1680.0
         gb_mohm = 14.0
         test_time = "26-08-22 17:08:41"
+        tested_at_iso = "2026-08-22T17:08:41Z"
     else:
         seed = int(hashlib.md5((module_id + "_hipot").encode('utf-8')).hexdigest()[:6], 16)
         dcw_leakage = round(10.00 + ((seed % 10) - 5) / 10.0, 2)
         ir_mohm = round(1680.0 + (seed % 200) - 100, 1)
         gb_mohm = round(14.0 + ((seed % 8) - 4) / 10.0, 1)
         test_time = "26-08-22 17:08:41"
+        tested_at_iso = "2026-08-22T17:08:41Z"
+
+    channels = [
+        {
+            "channel": 1,
+            "name": "CH1: Frame-to-Cell Dielectric",
+            "type": "DCW",
+            "voltage_v": 1500,
+            "measured_value": dcw_leakage,
+            "unit": "µA",
+            "limit": "< 50.0 µA",
+            "status": "PASS"
+        },
+        {
+            "channel": 2,
+            "name": "CH2: Wet Insulation Resistance",
+            "type": "IR",
+            "voltage_v": 1000,
+            "measured_value": ir_mohm,
+            "unit": "MΩ",
+            "limit": "≥ 400.0 MΩ",
+            "status": "PASS"
+        },
+        {
+            "channel": 3,
+            "name": "CH3: Ground Bond Continuity",
+            "type": "GB",
+            "test_current_a": 25,
+            "measured_value": gb_mohm,
+            "unit": "mΩ",
+            "limit": "< 100.0 mΩ",
+            "status": "PASS"
+        },
+        {
+            "channel": 4,
+            "name": "CH4: Reverse Current & Arc Detection",
+            "type": "ARC",
+            "voltage_v": 1500,
+            "measured_value": 0.0,
+            "unit": "µA",
+            "limit": "NO ARC",
+            "status": "PASS"
+        }
+    ]
 
     return {
         "module_id": module_id,
@@ -400,7 +468,21 @@ def get_hipot_telemetry(module_id):
         "db_engine": "PostgreSQL (100.100.0.22:5432 / hipot_tests)",
         "connection_ready": True,
         "overall_status": "PASS",
+        "overall_result": "PASS",
         "badge": "HIPOT: PASS",
+        "recipe": "IEC 61730-2 MST 16 / UL 61730",
+        "tested_at": tested_at_iso,
+        "withstand_voltage_v": 1500,
+        "leakage_current_ua": dcw_leakage,
+        "leakage_limit_ua": 50.0,
+        "insulation_resistance_mohm": ir_mohm,
+        "insulation_min_mohm": 400.0,
+        "ground_continuity_mohm": gb_mohm,
+        "ground_max_mohm": 100.0,
+        "wet_leakage_ua": round(dcw_leakage * 0.45, 2),
+        "dwell_time_s": 3.0,
+        "arc_detection": "NONE DETECTED",
+        "channels": channels,
         "parameters": {
             "dcw": {
                 "title": "1. DCW (DC Withstand)",
@@ -672,14 +754,18 @@ def fetch_el_image_via_ftp(panel_id, side="front"):
             if back_sample.exists():
                 return back_sample, "FALLBACK_SAMPLE_BACK"
         fallback_samples = [
-            BASE_DIR / "solar_el_sample.jpg",
+            BASE_DIR / "sample_el_1.jpg",
             BASE_DIR / "sample_el_2.jpg",
             BASE_DIR / "sample_el_3.jpg",
             BASE_DIR / "sample_el_4.jpg"
         ]
-        for sample in fallback_samples:
-            if sample.exists():
-                return sample, "FALLBACK_SAMPLE"
+        existing_samples = [s for s in fallback_samples if s.exists()]
+        if existing_samples:
+            chosen = existing_samples[abs(hash(panel_id)) % len(existing_samples)]
+            return chosen, "FALLBACK_SAMPLE"
+        default_single = BASE_DIR / "solar_el_sample.jpg"
+        if default_single.exists():
+            return default_single, "FALLBACK_SAMPLE"
         return None, "NO_IMAGE_AVAILABLE"
 
     ftp_cfg = CONFIG["ftp"]
@@ -1219,21 +1305,53 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
             self.send_json(200, data)
             return
 
-        # 10. Combined Telemetry Endpoint (SunSim + Hi-Pot)
-        if path.startswith("/api/telemetry/all"):
+        # 10. Combined Telemetry Endpoint (SunSim + Hi-Pot + EL Images)
+        if path.startswith("/api/telemetry"):
             query = parse_qs(parsed.query)
             mod_id = query.get("module_id", [None])[0] or current_conveyor_panel.get("panel_id", "USM0112208260078")
             sunsim = get_sunsim_telemetry(mod_id)
             hipot = get_hipot_telemetry(mod_id)
+            
+            # EL Image for single-module reference display on Monitor 2
+            sample_num = (abs(hash(mod_id)) % 4) + 1
+            el_image_url = f"/api/module/{mod_id}/el-image?side=front"
+            el_sample_fallback = f"sample_el_{sample_num}.jpg"
+            
             self.send_json(200, {
                 "module_id": mod_id,
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+                "el_image": el_image_url,
+                "el_fallback": el_sample_fallback,
+                "el_images": [el_sample_fallback],
                 "sunsim": sunsim,
+                "sun_simulator": sunsim,
                 "hipot": hipot
             })
             return
 
         # 11. Serve Static Files (index.html, telemetry.html, styles.css, app.js, config.js, images)
+        # Clean routing for Second Monitor page (/second, /second/, /screen2, /monitor2, /telemetry)
+        if path in ("/second/", "/screen2/", "/monitor2/", "/telemetry/"):
+            clean_dest = path.rstrip("/")
+            query_str = f"?{parsed.query}" if parsed.query else ""
+            self.send_response(302)
+            self.send_header("Location", f"{clean_dest}{query_str}")
+            self.end_headers()
+            return
+
+        if path in ("/second", "/screen2", "/monitor2", "/telemetry"):
+            telemetry_path = BASE_DIR / "telemetry.html"
+            if telemetry_path.exists():
+                with open(telemetry_path, "rb") as f:
+                    content = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(content)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(content)
+                return
+
         rel_path = path.lstrip("/")
         if not rel_path or rel_path == "":
             rel_path = "index.html"
@@ -1253,6 +1371,9 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
             self.send_header("Location", f"/index.html{query_str}")
             self.end_headers()
             return
+
+        if rel_path in ("second", "second.html", "screen2", "monitor2", "telemetry"):
+            rel_path = "telemetry.html"
         
         file_path = BASE_DIR / rel_path
         if file_path.exists() and file_path.is_file():
@@ -1342,7 +1463,8 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
         # Record_ID (IDENTITY) and Tested_At (datetimeoffset)
         if path == "/api/defects":
             module_id = str(payload.get("module_id", "")).strip()[:16]
-            defect_location = str(payload.get("defect_location") or payload.get("defect_cell") or payload.get("cell_coord", "")).strip()[:4]
+            raw_loc = str(payload.get("defect_location") or payload.get("defect_cell") or payload.get("cell_coord", "")).strip()
+            defect_location = "FRM" if raw_loc.upper() == "FRAME" else raw_loc[:4]
             defect_code = payload.get("defect_code", "A1")
             defect_name = payload.get("defect_name") or str(payload.get("defect_type") or "Defect")
             defect_type = str(defect_name).strip()[:30]
@@ -1397,14 +1519,71 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
         # 4. Remove / Delete a Cell Defect
         if path == "/api/defects/delete":
             module_id = str(payload.get("module_id", "")).strip()[:16]
-            defect_cell = str(payload.get("defect_location") or payload.get("defect_cell") or payload.get("cell_coord", "")).strip()[:4]
+            raw_cell = str(payload.get("defect_location") or payload.get("defect_cell") or payload.get("cell_coord", "")).strip()
+            defect_cell = "FRM" if raw_cell.upper() == "FRAME" else raw_cell[:4]
+            side = str(payload.get("side", "")).strip().lower()
             with get_db() as local_conn:
                 cursor = local_conn.cursor()
-                cursor.execute("DELETE FROM final_inspection_defects WHERE module_id = ? AND (defect_location = ? OR defect_cell = ?)", (module_id, defect_cell, defect_cell))
+                if side:
+                    cursor.execute(
+                        "DELETE FROM final_inspection_defects WHERE module_id = ? AND (defect_location = ? OR defect_cell = ?) AND LOWER(COALESCE(side, 'front')) = ?",
+                        (module_id, defect_cell, defect_cell, side)
+                    )
+                else:
+                    cursor.execute(
+                        "DELETE FROM final_inspection_defects WHERE module_id = ? AND (defect_location = ? OR defect_cell = ?)",
+                        (module_id, defect_cell, defect_cell)
+                    )
                 local_conn.commit()
-            print(f"[DB Local Delete] Removed defect cell {defect_cell} for module {module_id} from local cache. (MSSQL maintains append-only audit trail)")
-            self.send_json(200, {"success": True, "deleted": defect_cell})
+            print(f"[DB Local Delete] Removed defect cell {defect_cell} ({side or 'any side'}) for module {module_id} from local cache. (MSSQL maintains append-only audit trail)")
+            self.send_json(200, {"success": True, "deleted": defect_cell, "side": side})
             return
+
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if path == "/api/defects":
+            query = parse_qs(parsed.query)
+            module_id = str(query.get("module_id", [""])[0]).strip()[:16]
+            raw_cell = str(query.get("defect_location", [query.get("defect_cell", [query.get("cell_coord", [""])[0]])[0]])[0]).strip()
+            defect_cell = "FRM" if raw_cell.upper() == "FRAME" else raw_cell[:4]
+            side = str(query.get("side", [""])[0]).strip().lower()
+
+            if not module_id or not defect_cell:
+                # Fallback: check if payload was passed in body
+                length = int(self.headers.get("Content-Length", 0))
+                if length > 0:
+                    try:
+                        body_json = json.loads(self.rfile.read(length).decode("utf-8"))
+                        module_id = module_id or str(body_json.get("module_id", "")).strip()[:16]
+                        defect_cell = defect_cell or str(body_json.get("defect_location") or body_json.get("defect_cell") or body_json.get("cell_coord", "")).strip()[:4]
+                        side = side or str(body_json.get("side", "")).strip().lower()
+                    except Exception:
+                        pass
+
+            if not module_id or not defect_cell:
+                self.send_json(400, {"error": "Missing module_id or defect_cell for DELETE"})
+                return
+
+            with get_db() as local_conn:
+                cursor = local_conn.cursor()
+                if side:
+                    cursor.execute(
+                        "DELETE FROM final_inspection_defects WHERE module_id = ? AND (defect_location = ? OR defect_cell = ?) AND LOWER(COALESCE(side, 'front')) = ?",
+                        (module_id, defect_cell, defect_cell, side)
+                    )
+                else:
+                    cursor.execute(
+                        "DELETE FROM final_inspection_defects WHERE module_id = ? AND (defect_location = ? OR defect_cell = ?)",
+                        (module_id, defect_cell, defect_cell)
+                    )
+                local_conn.commit()
+
+            print(f"[DB Local Delete] HTTP DELETE removed defect {defect_cell} ({side or 'any side'}) for module {module_id} from local cache.")
+            self.send_json(200, {"success": True, "deleted": defect_cell, "side": side})
+            return
+
+        self.send_json(404, {"error": "Endpoint not found"})
 
         # 5. Commit Final Inspection Grade (User table: dbo.Final_Inspections)
         # Requirement: numeric grading 0 (A), 1 (B), 2 (Rework/Retest), 3 (Reject)
