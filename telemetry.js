@@ -3,7 +3,7 @@
  * Horizontal (16:9 Landscape) Screen Display Engine
  *
  * Controls:
- * - 4-Camera EL Imagery (2×2 Quad Array, Click-to-Focus, Invert EL)
+ * - Single-Module EL Imagery Reference Display with Dynamic FTP & Sample Fallback
  * - SunSim PMax & I-V HTML5 Canvas Graph with MPP Callout & 9 Flasher KPIs
  * - Hi-Pot Dielectric Safety Results with 5 Threshold Bars & 4-Channel Matrix
  * - Live Dual-Screen Zero-Latency Sync (BroadcastChannel, Storage, Polling, SSE)
@@ -32,8 +32,7 @@
       pillHipotDb: document.getElementById('pill-hipot-db'),
       btnToggleFullscreen: document.getElementById('btn-toggle-fullscreen'),
 
-      // EL Panel Elements (Single Module Reference View)
-      elViewportContainer: document.getElementById('el-viewport-container'),
+      // EL Single View Element
       elSingleImg: document.getElementById('el-single-img'),
 
       // SunSim Elements
@@ -54,7 +53,6 @@
 
       // Hi-Pot Elements
       valHipotTime: document.getElementById('val-hipot-time'),
-      valHipotTester: document.getElementById('val-hipot-tester'),
       valHipotBadge: document.getElementById('val-hipot-badge'),
       gaugeValDcwV: document.getElementById('gauge-val-dcw-v'),
       barFillDcwV: document.getElementById('bar-fill-dcw-v'),
@@ -75,30 +73,30 @@
   }
 
   // =========================================================================
-  // 1. EL Image Display (Single Module Reference)
+  // 1. Single Module EL Image Reference Display
   // =========================================================================
-  function hashString(str) {
-    if (!str) return 1;
+  function updateSingleElImage(moduleId, elUrl, fallbackUrl) {
+    if (!dom.elSingleImg) return;
+
+    // Deterministic hash from moduleId for stable sample fallback
     let hash = 0;
+    const str = String(moduleId || 'USM0112208260078');
     for (let i = 0; i < str.length; i++) {
       hash = ((hash << 5) - hash) + str.charCodeAt(i);
       hash |= 0;
     }
-    return hash;
-  }
+    const sampleIdx = Math.abs(hash % 4) + 1;
+    const defaultFallback = `sample_el_${sampleIdx}.jpg`;
+    const finalFallback = fallbackUrl || defaultFallback;
 
-  function updateElImageForModule(moduleId, fallbackSample) {
-    if (!dom.elSingleImg) return;
-    const cleanId = (moduleId || '').trim();
-    const sampleNum = (Math.abs(hashString(cleanId)) % 4) + 1;
-    const defaultFallback = fallbackSample || `sample_el_${sampleNum}.jpg`;
-
-    // Try live FTP-served image first, fallback seamlessly if offline
-    dom.elSingleImg.onerror = () => {
-      dom.elSingleImg.onerror = null;
-      dom.elSingleImg.src = defaultFallback;
+    // Attach graceful fallback handler
+    dom.elSingleImg.onerror = function () {
+      this.onerror = null;
+      this.src = finalFallback;
     };
-    dom.elSingleImg.src = `/api/module/${encodeURIComponent(cleanId)}/el-image?side=front`;
+
+    const targetSrc = elUrl || (`/api/module/${encodeURIComponent(moduleId)}/el-image?side=front`);
+    dom.elSingleImg.src = targetSrc;
   }
 
   // =========================================================================
@@ -149,24 +147,24 @@
     const s = state.sunsimData;
     const p = s.parameters || {};
 
-    if (key === 'pmax') return p.pmax_w ?? s.pmax ?? defaultVal;
-    if (key === 'voc') return p.voc_v ?? s.voc ?? defaultVal;
-    if (key === 'isc') return p.isc_a ?? s.isc ?? defaultVal;
-    if (key === 'vmp') return p.vmp_v ?? s.vmp ?? defaultVal;
-    if (key === 'imp') return p.imp_a ?? s.imp ?? defaultVal;
-    if (key === 'ff') return p.fill_factor_pct ?? s.ff ?? defaultVal;
-    if (key === 'temp') return p.cell_temp_c ?? s.temp ?? defaultVal;
-    if (key === 'eff') return p.efficiency_pct ?? s.efficiency ?? defaultVal;
-    if (key === 'bin') return p.power_bin ?? s.power_bin ?? s.bin ?? defaultVal;
-    if (key === 'model') return p.module_model ?? s.module_model ?? s.model ?? defaultVal;
+    if (key === 'pmax') return p.pmax_w ?? s.pmax ?? p.pmax ?? s.Pmax ?? p.Pmax ?? s.PMAX ?? defaultVal;
+    if (key === 'voc') return p.voc_v ?? s.voc ?? p.voc ?? s.Voc ?? p.Voc ?? s.VOC ?? defaultVal;
+    if (key === 'isc') return p.isc_a ?? s.isc ?? p.isc ?? s.Isc ?? p.Isc ?? s.ISC ?? defaultVal;
+    if (key === 'vmp') return p.vmp_v ?? s.vmp ?? p.vmp ?? s.Vmp ?? p.Vmp ?? s.VMP ?? defaultVal;
+    if (key === 'imp') return p.imp_a ?? s.imp ?? p.imp ?? s.Imp ?? p.Imp ?? s.IMP ?? defaultVal;
+    if (key === 'ff') return p.fill_factor_pct ?? s.ff ?? p.ff ?? s.FF ?? p.FF ?? s.FillFactor ?? defaultVal;
+    if (key === 'temp') return p.cell_temp_c ?? s.temp ?? p.temp ?? s.Temp ?? p.Temp ?? s.Temperature ?? defaultVal;
+    if (key === 'eff') return p.efficiency_pct ?? s.efficiency ?? p.eff ?? s.eff ?? s.Eff ?? p.Eff ?? s.Efficiency ?? defaultVal;
+    if (key === 'bin') return p.power_bin ?? s.power_bin ?? s.bin ?? p.bin ?? s.Bin ?? p.Bin ?? s.POWER_BIN ?? defaultVal;
+    if (key === 'model') return p.module_model ?? s.module_model ?? s.model ?? p.model ?? s.Model ?? defaultVal;
 
     return p[key] ?? s[key] ?? defaultVal;
   }
 
   function updateHoverReadout(vVal) {
     if (!dom.canvasReadout) return;
-    const voc = getSunsimParam('voc', 50.35);
-    const isc = getSunsimParam('isc', 13.56);
+    const voc = Number(getSunsimParam('voc', 50.35));
+    const isc = Number(getSunsimParam('isc', 13.56));
 
     // Calculate curve current & power at this voltage
     const vNorm = Math.min(1.0, Math.max(0.0, vVal / voc));
@@ -214,9 +212,9 @@
     const voc = Number(getSunsimParam('voc', 50.35));
     const isc = Number(getSunsimParam('isc', 13.56));
 
-    const maxV = 55.0;  // X axis ceiling
-    const maxP = 600.0; // Left Y axis ceiling (Power in W)
-    const maxI = 16.0;  // Right Y axis ceiling (Current in A)
+    const maxV = Math.max(55.0, voc * 1.05);  // X axis ceiling
+    const maxP = Math.max(600.0, pmax * 1.1); // Left Y axis ceiling (Power in W)
+    const maxI = Math.max(16.0, isc * 1.15);  // Right Y axis ceiling (Current in A)
 
     state.canvasMetrics = { padL, padR, padT, padB, plotW, plotH, maxV, maxP, maxI };
 
@@ -286,68 +284,84 @@
     ctx.stroke();
     ctx.restore();
 
-    // Generate Curve Points (Double-Diode high fidelity PV simulation or data array)
+    // Curve Points (use API points if available, otherwise calculate double-diode curve)
     const curvePoints = [];
-    const pts = 80;
-    for (let i = 0; i <= pts; i++) {
-      const v = (maxV * i) / pts;
-      let curI = 0;
-      if (v < voc) {
-        const vNorm = v / voc;
-        curI = Math.max(0, isc * (1.0 - Math.pow(vNorm, 9.6)));
+    const rawCurve = (state.sunsimData && (state.sunsimData.pmax_curve || state.sunsimData.iv_curve)) || null;
+
+    if (Array.isArray(rawCurve) && rawCurve.length > 5) {
+      for (const pt of rawCurve) {
+        const v = Number(pt.v || 0);
+        const i = Number(pt.i || 0);
+        const p = Number(pt.p !== undefined ? pt.p : v * i);
+        curvePoints.push({
+          v, i, p,
+          x: padL + (v / maxV) * plotW,
+          yP: padT + plotH - (p / maxP) * plotH,
+          yI: padT + plotH - (i / maxI) * plotH
+        });
       }
-      const curP = v * curI;
-      curvePoints.push({
-        v,
-        i: curI,
-        p: curP,
-        x: padL + (v / maxV) * plotW,
-        yP: padT + plotH - (curP / maxP) * plotH,
-        yI: padT + plotH - (curI / maxI) * plotH
-      });
+    } else {
+      const pts = 80;
+      for (let i = 0; i <= pts; i++) {
+        const v = (maxV * i) / pts;
+        let curI = 0;
+        if (v < voc) {
+          const vNorm = v / voc;
+          curI = Math.max(0, isc * (1.0 - Math.pow(vNorm, 9.6)));
+        }
+        const curP = v * curI;
+        curvePoints.push({
+          v, i: curI, p: curP,
+          x: padL + (v / maxV) * plotW,
+          yP: padT + plotH - (curP / maxP) * plotH,
+          yI: padT + plotH - (curI / maxI) * plotH
+        });
+      }
     }
 
-    // 1. Draw P-V Curve (Power vs Voltage) with subtle glow & fill
-    const gradP = ctx.createLinearGradient(0, padT, 0, padT + plotH);
-    gradP.addColorStop(0, 'rgba(56, 189, 248, 0.22)');
-    gradP.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
+    if (curvePoints.length > 1) {
+      // 1. Draw P-V Curve (Power vs Voltage) with subtle glow & fill
+      const gradP = ctx.createLinearGradient(0, padT, 0, padT + plotH);
+      gradP.addColorStop(0, 'rgba(56, 189, 248, 0.22)');
+      gradP.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
 
-    ctx.beginPath();
-    ctx.moveTo(curvePoints[0].x, padT + plotH);
-    for (let pt of curvePoints) {
-      ctx.lineTo(pt.x, pt.yP);
-    }
-    ctx.lineTo(curvePoints[curvePoints.length - 1].x, padT + plotH);
-    ctx.closePath();
-    ctx.fillStyle = gradP;
-    ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(curvePoints[0].x, padT + plotH);
+      for (let pt of curvePoints) {
+        ctx.lineTo(pt.x, pt.yP);
+      }
+      ctx.lineTo(curvePoints[curvePoints.length - 1].x, padT + plotH);
+      ctx.closePath();
+      ctx.fillStyle = gradP;
+      ctx.fill();
 
-    ctx.save();
-    ctx.shadowColor = '#38bdf8';
-    ctx.shadowBlur = 8;
-    ctx.strokeStyle = '#38bdf8';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.moveTo(curvePoints[0].x, curvePoints[0].yP);
-    for (let i = 1; i < curvePoints.length; i++) {
-      ctx.lineTo(curvePoints[i].x, curvePoints[i].yP);
-    }
-    ctx.stroke();
-    ctx.restore();
+      ctx.save();
+      ctx.shadowColor = '#38bdf8';
+      ctx.shadowBlur = 8;
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(curvePoints[0].x, curvePoints[0].yP);
+      for (let i = 1; i < curvePoints.length; i++) {
+        ctx.lineTo(curvePoints[i].x, curvePoints[i].yP);
+      }
+      ctx.stroke();
+      ctx.restore();
 
-    // 2. Draw I-V Curve (Current vs Voltage)
-    ctx.save();
-    ctx.strokeStyle = '#f59e0b';
-    ctx.lineWidth = 2;
-    ctx.shadowColor = 'rgba(245, 158, 11, 0.5)';
-    ctx.shadowBlur = 6;
-    ctx.beginPath();
-    ctx.moveTo(curvePoints[0].x, curvePoints[0].yI);
-    for (let i = 1; i < curvePoints.length; i++) {
-      ctx.lineTo(curvePoints[i].x, curvePoints[i].yI);
+      // 2. Draw I-V Curve (Current vs Voltage)
+      ctx.save();
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 2;
+      ctx.shadowColor = 'rgba(245, 158, 11, 0.5)';
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.moveTo(curvePoints[0].x, curvePoints[0].yI);
+      for (let i = 1; i < curvePoints.length; i++) {
+        ctx.lineTo(curvePoints[i].x, curvePoints[i].yI);
+      }
+      ctx.stroke();
+      ctx.restore();
     }
-    ctx.stroke();
-    ctx.restore();
 
     // 3. Highlight Maximum Power Point (MPP): Crosshairs, Point & Callout
     const mppX = padL + (vmp / maxV) * plotW;
@@ -485,8 +499,8 @@
     const gb = p.gb || {};
 
     // 1. DCW Voltage & Leakage
-    const dcwVolts = hipot.withstand_voltage_v ?? p.test_voltage_vdc ?? 1500;
-    const dcwVal = parseFloat(hipot.leakage_current_ua ?? dcw.value ?? '10.00') || 10.0;
+    const dcwVolts = hipot.withstand_voltage_v ?? p.test_voltage_vdc ?? hipot.voltage ?? hipot.Voltage ?? 1500;
+    const dcwVal = parseFloat(hipot.leakage_current_ua ?? dcw.value ?? hipot.leakage_current ?? hipot.leakage ?? '10.00') || 10.0;
     if (dom.gaugeValDcwV) dom.gaugeValDcwV.textContent = `${dcwVolts}`;
     if (dom.gaugeValDcw) dom.gaugeValDcw.textContent = dcwVal.toFixed(2);
 
@@ -498,7 +512,7 @@
     }
 
     // 2. Insulation Resistance (IR)
-    const irVal = parseFloat(hipot.insulation_resistance_mohm ?? ir.value ?? '1680.0') || 1680.0;
+    const irVal = parseFloat(hipot.insulation_resistance_mohm ?? ir.value ?? hipot.insulation_resistance ?? hipot.ir ?? '1680.0') || 1680.0;
     if (dom.gaugeValIr) dom.gaugeValIr.textContent = irVal.toFixed(1);
 
     // IR bar (Floor: 400 MΩ, target max scale 2000 MΩ)
@@ -509,7 +523,7 @@
     }
 
     // 3. Ground Bond Continuity (GB)
-    const gbVal = parseFloat(hipot.ground_continuity_mohm ?? gb.value ?? '14.0') || 14.0;
+    const gbVal = parseFloat(hipot.ground_continuity_mohm ?? gb.value ?? hipot.ground_continuity ?? hipot.gb ?? '14.0') || 14.0;
     if (dom.gaugeValGb) dom.gaugeValGb.textContent = gbVal.toFixed(1);
 
     // GB bar (0 to 100 mΩ max limit)
@@ -520,8 +534,8 @@
     }
 
     // 4. Arc Detection & Dwell
-    const arcDetected = hipot.arc_detection ?? p.arc_detected ?? false;
-    const dwell = hipot.dwell_time_s ?? p.test_duration_sec ?? 3.0;
+    const arcDetected = hipot.arc_detection ?? p.arc_detected ?? hipot.arc ?? false;
+    const dwell = hipot.dwell_time_s ?? p.test_duration_sec ?? hipot.dwell_time ?? 3.0;
     if (dom.gaugeValArc) {
       dom.gaugeValArc.textContent = arcDetected ? 'ARC TRIP' : 'NONE';
       dom.gaugeValArc.className = `gauge-num ${arcDetected ? 'fail' : 'green-text'}`;
@@ -529,11 +543,11 @@
     if (dom.valDwell) dom.valDwell.textContent = `${Number(dwell).toFixed(1)}s`;
 
     // 5. Header Badges & Timestamps
-    const timeStr = hipot.tested_at || p.test_timestamp || '26-08-22 17:08:41';
+    const timeStr = hipot.tested_at || p.test_timestamp || hipot.test_time || '26-08-22 17:08:41';
     if (dom.valHipotTime) dom.valHipotTime.textContent = timeStr;
-    if (dom.valHipotTester && p.tester_id) dom.valHipotTester.textContent = p.tester_id;
 
-    const overallPass = ((hipot.overall_result || hipot.overall_status) === 'PASS' || !arcDetected);
+    const rawStatus = hipot.overall_result || hipot.overall_status || hipot.status || (arcDetected ? 'FAIL' : 'PASS');
+    const overallPass = (rawStatus.toUpperCase() === 'PASS');
     if (dom.valHipotBadge) {
       dom.valHipotBadge.textContent = overallPass ? 'PASS' : 'FAIL';
       dom.valHipotBadge.className = `hipot-master-badge ${overallPass ? 'pass' : 'fail'}`;
@@ -572,21 +586,21 @@
   // =========================================================================
   async function loadTelemetryForModule(moduleId) {
     if (!moduleId) return;
-    const cleanId = moduleId.trim().toUpperCase();
-    state.moduleId = cleanId;
+    state.moduleId = moduleId;
 
-    if (dom.displayModuleId) dom.displayModuleId.textContent = cleanId;
+    if (dom.displayModuleId) dom.displayModuleId.textContent = moduleId;
 
-    // Immediately trigger EL image refresh for this module
-    updateElImageForModule(cleanId);
+    // Immediately trigger EL image update
+    updateSingleElImage(moduleId);
 
     // 1. Try `/api/telemetry?module_id=...`
     try {
-      const res = await fetch(`/api/telemetry?module_id=${encodeURIComponent(cleanId)}`);
+      const res = await fetch(`/api/telemetry?module_id=${encodeURIComponent(moduleId)}`);
       if (res.ok) {
         const data = await res.json();
-        if (data.el_image || data.el_fallback) {
-          updateElImageForModule(cleanId, data.el_fallback);
+        const elUrl = data.el_image || (Array.isArray(data.el_images) ? data.el_images[0] : null);
+        if (elUrl) {
+          updateSingleElImage(moduleId, elUrl);
         }
         const sunsim = data.sun_simulator || data.sunsim;
         if (sunsim) {
@@ -606,7 +620,7 @@
 
     // 2. Try `/api/telemetry/all?module_id=...`
     try {
-      const resAll = await fetch(`/api/telemetry/all?module_id=${encodeURIComponent(cleanId)}`);
+      const resAll = await fetch(`/api/telemetry/all?module_id=${encodeURIComponent(moduleId)}`);
       if (resAll.ok) {
         const data = await resAll.json();
         const sunsim = data.sunsim || data.sun_simulator;
@@ -628,8 +642,8 @@
     // 3. Fallback: Fetch SunSim and Hi-Pot endpoints in parallel
     try {
       const [sunsimRes, hipotRes] = await Promise.all([
-        fetch(`/api/telemetry/sunsim?module_id=${encodeURIComponent(cleanId)}`),
-        fetch(`/api/telemetry/hipot?module_id=${encodeURIComponent(cleanId)}`)
+        fetch(`/api/telemetry/sunsim?module_id=${encodeURIComponent(moduleId)}`),
+        fetch(`/api/telemetry/hipot?module_id=${encodeURIComponent(moduleId)}`)
       ]);
 
       if (sunsimRes.ok) {
@@ -743,7 +757,7 @@
   }
 
   // =========================================================================
-  // 8. Initialization (Pure Reference Display - Zero Interaction Required)
+  // 8. Initialization
   // =========================================================================
   function init() {
     queryDom();
@@ -751,17 +765,9 @@
     initLiveSync();
     initFullscreenButton();
 
-    // Check URL parameters or localStorage from Screen 1
+    // Check URL parameters for ?module_id=...
     const urlParams = new URLSearchParams(window.location.search);
-    let initialMod = urlParams.get('module_id') || urlParams.get('sn');
-    if (!initialMod) {
-      try {
-        initialMod = localStorage.getItem('fvi_active_module_id');
-      } catch (e) {}
-    }
-    if (!initialMod) {
-      initialMod = state.moduleId;
-    }
+    const initialMod = urlParams.get('module_id') || urlParams.get('sn') || state.moduleId;
     loadTelemetryForModule(initialMod);
   }
 
@@ -774,6 +780,7 @@
   // Expose global interface for interop with Screen 1 console
   window.FVITelemetry = {
     loadTelemetryForModule,
+    updateSingleElImage,
     state
   };
 

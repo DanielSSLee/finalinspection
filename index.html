@@ -32,6 +32,11 @@
           title="Conveyor MQTT Sensor: Listening for panel arrivals">
           <span>MQTT</span>
         </div>
+        <div class="status-indicator-pill status-queue" id="mqtt-queue-pill"
+          title="Conveyor Channel &amp; Inspection Queue Status (CH88 / CH89)">
+          <span class="queue-channel-badge" id="queue-channel-badge">CH88</span>
+          <span class="queue-count-text" id="queue-count-text">QUEUE: 0</span>
+        </div>
         <button type="button" class="status-indicator-pill btn-pill-action" id="pill-sim-trigger"
           title="Hardware & Conveyor Simulator">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
@@ -401,6 +406,86 @@
     <div class="hover-tooltip" id="hover-tooltip">
       <span class="tooltip-coord">A-1</span>
       <span class="tooltip-status">Click to inspect</span>
+    </div>
+
+    <!-- Serial Number Verification Modal Before Grade Submission -->
+    <div class="modal-backdrop" id="serial-verify-modal" role="dialog" aria-modal="true"
+      aria-labelledby="verify-dialog-title">
+      <div class="modal-dialog modal-verify">
+        <div class="modal-header modal-header-verify">
+          <div class="modal-title-group">
+            <span class="modal-cell-badge badge-verify">CONVEYOR MES VERIFY</span>
+            <h3 id="verify-dialog-title">VERIFY MODULE SERIAL NUMBER</h3>
+          </div>
+          <button type="button" class="btn-close-modal" id="btn-close-verify-modal"
+            aria-label="Close Verification">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="verify-prompt-banner">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+            <p>Please verify that the physical module serial number on the conveyor matches the active serial number before submitting the grade.</p>
+          </div>
+
+          <div class="verify-details-card">
+            <div class="verify-field-row">
+              <div class="verify-field-header-row">
+                <span class="verify-field-label">MODULE SERIAL NUMBER</span>
+                <span class="verify-channel-badge" id="verify-modal-channel">MQTT CH88</span>
+              </div>
+              <div class="verify-serial-display" id="verify-modal-serial">USM0112208260078</div>
+            </div>
+
+            <div class="verify-meta-grid">
+              <div class="verify-meta-item">
+                <span class="verify-field-label">ASSIGNED GRADE</span>
+                <div class="verify-grade-display" id="verify-modal-grade">[A] PRIME</div>
+              </div>
+
+              <div class="verify-meta-item">
+                <span class="verify-field-label">LOGGED DEFECTS</span>
+                <div class="verify-defects-display" id="verify-modal-defects">0 defects tagged</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Physical Barcode Scanner Verification Section -->
+          <div class="verify-barcode-section">
+            <label for="verify-barcode-input" class="verify-barcode-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                <rect x="2" y="4" width="20" height="16" rx="1"></rect>
+                <path d="M6 8h3M6 12h2M6 16h4M13 8h5M13 12h2M13 16h5"></path>
+              </svg>
+              <span>OPTION 1 — SCAN PHYSICAL BARCODE TO VERIFY &amp; AUTO-SUBMIT:</span>
+            </label>
+            <div class="verify-barcode-input-wrapper">
+              <input type="text" id="verify-barcode-input" class="verify-barcode-input"
+                placeholder="Scan physical module barcode here (pasted code auto-verifies)..."
+                autocomplete="off" maxlength="24">
+            </div>
+            <div class="verify-scan-status" id="verify-scan-status">
+              Waiting for physical barcode scan, or click 'Yes — Serial Matches' below.
+            </div>
+            <button type="button" class="btn-verify-switch-scanned" id="btn-verify-switch-scanned" style="display: none;">
+              Switch Active Module to Scanned Serial
+            </button>
+          </div>
+        </div>
+        <div class="modal-footer verify-footer">
+          <button type="button" class="console-btn secondary" id="btn-verify-cancel" title="Cancel or edit serial number [Esc]">
+            Cancel / Edit Serial
+          </button>
+          <button type="button" class="console-btn primary btn-verify-submit" id="btn-verify-confirm" title="Confirm and submit grade to MES [Enter]">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+            <span>Yes &mdash; Serial Matches (Submit Grade)</span>
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- CMMS Inspector Login & Profile Modal -->

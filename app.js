@@ -154,7 +154,12 @@ const state = {
   currentOperator: null,
   authToken: null,
   isServerOnline: false,
-  isMqttConnected: false
+  isMqttConnected: false,
+  activeChannel: '', // 'CH88' | 'CH89' | 'MANUAL'
+  moduleReadyForImmediateLoad: true, // true when waiting for next module
+  mqttQueue: [], // array of { panel_id, channel, timestamp }
+  lastSeenChannelSerial: { CH88: null, CH89: null },
+  prefetchedCache: new Map() // serial -> { telemetry, defects }
 };
 
 // Coordinate Configuration
@@ -199,6 +204,9 @@ const dom = {
   displayOperatorName: document.getElementById('display-operator-name'),
   pillDbStatus: document.getElementById('pill-db-status'),
   pillMqttStatus: document.getElementById('pill-mqtt-status'),
+  mqttQueuePill: document.getElementById('mqtt-queue-pill'),
+  queueChannelBadge: document.getElementById('queue-channel-badge'),
+  queueCountText: document.getElementById('queue-count-text'),
   pillSimTrigger: document.getElementById('pill-sim-trigger'),
   gradeButtons: document.querySelectorAll('.grade-toggle'),
   btnGradeA: document.getElementById('btn-grade-a'),
@@ -288,6 +296,19 @@ const dom = {
   sqlCodeDisplay: document.getElementById('sql-code-display'),
   btnCopySql: document.getElementById('btn-copy-sql'),
 
+  // Serial Verification Modal
+  serialVerifyModal: document.getElementById('serial-verify-modal'),
+  verifyModalSerial: document.getElementById('verify-modal-serial'),
+  verifyModalChannel: document.getElementById('verify-modal-channel'),
+  verifyModalGrade: document.getElementById('verify-modal-grade'),
+  verifyModalDefects: document.getElementById('verify-modal-defects'),
+  verifyBarcodeInput: document.getElementById('verify-barcode-input'),
+  verifyScanStatus: document.getElementById('verify-scan-status'),
+  btnVerifySwitchScanned: document.getElementById('btn-verify-switch-scanned'),
+  btnVerifyCancel: document.getElementById('btn-verify-cancel'),
+  btnVerifyConfirm: document.getElementById('btn-verify-confirm'),
+  btnCloseVerifyModal: document.getElementById('btn-close-verify-modal'),
+
   toastContainer: document.getElementById('toast-container')
 };
 
@@ -370,11 +391,14 @@ function initApp() {
   const urlModule = urlParams.get('module') || urlParams.get('serial') || urlParams.get('sn') || urlParams.get('id');
   if (urlModule) {
     const cleanMod = urlModule.trim().toUpperCase().slice(0, 16);
-    loadModule(cleanMod);
+    loadModule(cleanMod, 'URL');
+    state.moduleReadyForImmediateLoad = false;
   } else {
-    // Default test module
-    loadModule('USM0112208260078');
+    // Default initial baseline module
+    loadModule('USM0112208260078', 'BASELINE');
+    state.moduleReadyForImmediateLoad = true;
   }
+  updateQueueDisplay();
 
   // Fetch grading history on startup & poll periodically
   fetchGradingHistory();
@@ -880,6 +904,7 @@ function recordDefect(locCode, side, defectCode, notes, locType) {
   };
 
   state.defects.set(defKey, defectItem);
+  state.moduleReadyForImmediateLoad = false;
 
   updateSummaryAndHistory();
   renderDefectPins();
@@ -1097,6 +1122,7 @@ function setGrade(gradeLetter) {
   }
 
   state.grade = gradeLetter;
+  state.moduleReadyForImmediateLoad = false;
   dom.gradeButtons.forEach(btn => {
     const isSelected = btn.dataset.grade === gradeLetter;
     btn.classList.toggle('selected', isSelected);
@@ -1125,12 +1151,24 @@ function resetGrade() {
 }
 
 /**
- * Submit Inspection & Grade (POST /api/inspections)
+ * Submit Grade flow: Validates operator, serial, grade, defects criteria,
+ * then opens the Serial Verification Popup before sending to database.
  */
 function submitGrade() {
-  if (!state.moduleId || state.moduleId.length !== 16) {
+  if (!state.currentOperator) {
+    showToast('Please sign in as operator before submitting grade', 'error');
+    openLoginModal();
+    soundFx.beep(300, 0.1);
+    return;
+  }
+
+  const cleanMod = (state.moduleId || '').trim().toUpperCase();
+  if (!cleanMod || cleanMod.length !== 16 || !cleanMod.startsWith('USM')) {
     showToast('Valid 16-character Module Serial required (e.g. USM0112208260078)', 'error');
-    if (dom.moduleIdInput) dom.moduleIdInput.focus();
+    if (dom.moduleIdInput) {
+      dom.moduleIdInput.focus();
+      dom.moduleIdInput.select();
+    }
     soundFx.beep(300, 0.1);
     return;
   }
@@ -1140,6 +1178,266 @@ function submitGrade() {
     soundFx.beep(300, 0.1);
     return;
   }
+
+  if (!state.allowedGrades.includes(state.grade)) {
+    showToast(`Grade [${state.grade}] is not allowed due to logged defects`, 'error');
+    soundFx.beep(300, 0.1);
+    return;
+  }
+
+  // Open verification popup before sending to database
+  openSerialVerifyModal();
+}
+
+/**
+ * Background Data Pre-Fetching for Conveyor Modules
+ */
+function prefetchModuleData(serial) {
+  if (!serial || !serial.startsWith('USM')) return;
+  const cleanMod = serial.trim().toUpperCase().slice(0, 16);
+  if (state.prefetchedCache.has(cleanMod)) return;
+
+  const entry = { telemetry: null, defects: null, prefetchedAt: Date.now() };
+  state.prefetchedCache.set(cleanMod, entry);
+
+  fetch(`${config.apiBaseUrl}/api/telemetry?module_id=${encodeURIComponent(cleanMod)}`)
+    .then(r => r.ok ? r.json() : null)
+    .then(data => {
+      if (data) entry.telemetry = data;
+    })
+    .catch(() => {});
+
+  fetch(`${config.apiBaseUrl}/api/defects?module_id=${encodeURIComponent(cleanMod)}`)
+    .then(r => r.ok ? r.json() : null)
+    .then(data => {
+      if (data) entry.defects = data;
+    })
+    .catch(() => {});
+}
+
+/**
+ * Update Conveyor Queue & Active Channel Display Pill
+ */
+function updateQueueDisplay() {
+  if (!dom.mqttQueuePill) return;
+  const count = state.mqttQueue.length;
+  const activeChan = state.activeChannel || (state.moduleId ? 'ACTIVE' : 'IDLE');
+
+  if (dom.queueChannelBadge) {
+    dom.queueChannelBadge.textContent = activeChan;
+    dom.queueChannelBadge.className = `queue-channel-badge chan-${activeChan.toLowerCase()}`;
+  }
+
+  if (dom.queueCountText) {
+    if (count === 0) {
+      dom.queueCountText.textContent = 'QUEUE: 0';
+    } else {
+      const nextMod = state.mqttQueue[0];
+      const nextChan = nextMod.channel || 'MQTT';
+      const shortSerial = nextMod.panel_id.length > 16 ? nextMod.panel_id.slice(-6) : nextMod.panel_id;
+      dom.queueCountText.textContent = `QUEUE: ${count} NEXT (${shortSerial} • ${nextChan})`;
+    }
+  }
+
+  if (count > 0) {
+    dom.mqttQueuePill.classList.add('has-queue');
+  } else {
+    dom.mqttQueuePill.classList.remove('has-queue');
+  }
+}
+
+/**
+ * Handle Real-Time MQTT Panel Serial Updates (CH88 / CH89)
+ */
+function handleIncomingMqttSerial(serial, channel) {
+  if (!serial) return;
+  const cleanSerial = serial.trim().toUpperCase().slice(0, 16);
+  if (!cleanSerial.startsWith('USM')) return;
+
+  // Deduplication per channel
+  if (channel && state.lastSeenChannelSerial[channel] === cleanSerial) {
+    return;
+  }
+  if (channel) {
+    state.lastSeenChannelSerial[channel] = cleanSerial;
+  }
+
+  // Background pre-fetch database and FTP telemetry & defects
+  prefetchModuleData(cleanSerial);
+
+  // Check if screen is free for immediate loading
+  const isScreenFree = !state.moduleId || (
+    state.moduleReadyForImmediateLoad === true &&
+    state.defects.size === 0 &&
+    !state.grade
+  );
+
+  if (isScreenFree) {
+    // Immediate load onto screen
+    loadModule(cleanSerial, channel);
+    state.moduleReadyForImmediateLoad = false;
+    showToast(`Conveyor [${channel || 'MQTT'}]: Loaded ${cleanSerial}`, 'info');
+  } else if (cleanSerial !== state.moduleId) {
+    // Active module is locked on screen being graded; enqueue to prevent interruption
+    const alreadyQueued = state.mqttQueue.some(item => item.panel_id === cleanSerial);
+    if (!alreadyQueued) {
+      state.mqttQueue.push({
+        panel_id: cleanSerial,
+        channel: channel || 'MQTT',
+        timestamp: new Date().toISOString()
+      });
+      updateQueueDisplay();
+      showToast(`Queued next module from ${channel || 'MQTT'}: ${cleanSerial} (${state.mqttQueue.length} in queue)`, 'info');
+    }
+  }
+}
+
+/**
+ * Open Serial Number Verification Modal
+ */
+function openSerialVerifyModal() {
+  if (!dom.serialVerifyModal) {
+    executeInspectionSubmission();
+    return;
+  }
+
+  if (dom.verifyModalSerial) {
+    dom.verifyModalSerial.textContent = state.moduleId;
+  }
+
+  if (dom.verifyModalChannel) {
+    let chanLabel = 'MANUAL';
+    if (state.activeChannel) {
+      chanLabel = state.activeChannel.startsWith('CH') ? `MQTT ${state.activeChannel}` : state.activeChannel;
+    }
+    dom.verifyModalChannel.textContent = chanLabel;
+  }
+
+  if (dom.verifyModalGrade) {
+    const gradeMap = { A: 'PRIME', B: 'SECONDARY', R: 'RETEST/REWORK', X: 'REJECT' };
+    const label = gradeMap[state.grade] || '';
+    dom.verifyModalGrade.textContent = `[${state.grade}] ${label}`;
+    dom.verifyModalGrade.className = `verify-grade-display gh-grade-${state.grade.toLowerCase()}`;
+  }
+
+  if (dom.verifyModalDefects) {
+    const count = state.defects.size;
+    if (count === 0) {
+      dom.verifyModalDefects.textContent = '0 defects (Clean module)';
+      dom.verifyModalDefects.style.color = '#34d399';
+    } else {
+      const defectCodes = Array.from(state.defects.values()).map(d => `${d.coord}:${d.defectCode}`).slice(0, 5).join(', ');
+      const more = count > 5 ? ` +${count - 5} more` : '';
+      dom.verifyModalDefects.textContent = `${count} defect(s) [${defectCodes}${more}]`;
+      dom.verifyModalDefects.style.color = '#fbbf24';
+    }
+  }
+
+  // Reset physical barcode scanner verification state
+  if (dom.verifyBarcodeInput) {
+    dom.verifyBarcodeInput.value = '';
+  }
+  if (dom.verifyScanStatus) {
+    dom.verifyScanStatus.className = 'verify-scan-status';
+    dom.verifyScanStatus.textContent = "Waiting for physical barcode scan, or click 'Yes — Serial Matches' below.";
+  }
+  if (dom.btnVerifySwitchScanned) {
+    dom.btnVerifySwitchScanned.style.display = 'none';
+  }
+
+  dom.serialVerifyModal.classList.add('open');
+
+  // Auto-focus physical barcode input for instant scan verification
+  setTimeout(() => {
+    if (dom.verifyBarcodeInput) {
+      dom.verifyBarcodeInput.focus();
+    } else if (dom.btnVerifyConfirm) {
+      dom.btnVerifyConfirm.focus();
+    }
+  }, 60);
+
+  soundFx.beep(820, 0.05);
+}
+
+/**
+ * Close Serial Number Verification Modal
+ */
+function closeSerialVerifyModal(refocusScanner = false) {
+  if (dom.serialVerifyModal) {
+    dom.serialVerifyModal.classList.remove('open');
+  }
+  if (dom.verifyBarcodeInput) {
+    dom.verifyBarcodeInput.value = '';
+  }
+  if (refocusScanner && dom.moduleIdInput) {
+    dom.moduleIdInput.focus();
+    dom.moduleIdInput.select();
+  }
+}
+
+/**
+ * Handle Barcode Scanner / Enter Verification in Modal
+ */
+function handleBarcodeVerification(isEnterKey = false) {
+  if (!dom.verifyBarcodeInput) return;
+  const scanned = dom.verifyBarcodeInput.value.trim().toUpperCase();
+  const expected = (state.moduleId || '').trim().toUpperCase();
+
+  // If input is empty and Enter was pressed, acts as clicking "Yes — Serial Matches"
+  if (isEnterKey && !scanned) {
+    executeInspectionSubmission();
+    return;
+  }
+
+  if (!scanned) {
+    if (dom.verifyScanStatus) {
+      dom.verifyScanStatus.className = 'verify-scan-status';
+      dom.verifyScanStatus.textContent = "Waiting for physical barcode scan, or click 'Yes — Serial Matches' below.";
+    }
+    if (dom.btnVerifySwitchScanned) dom.btnVerifySwitchScanned.style.display = 'none';
+    return;
+  }
+
+  // Case A: Exact Match
+  if (scanned === expected) {
+    if (dom.verifyScanStatus) {
+      dom.verifyScanStatus.className = 'verify-scan-status match';
+      dom.verifyScanStatus.textContent = `✓ PHYSICAL BARCODE MATCHED (${scanned}) — SUBMITTING GRADE...`;
+    }
+    if (dom.btnVerifySwitchScanned) dom.btnVerifySwitchScanned.style.display = 'none';
+    soundFx.beep(950, 0.12);
+    setTimeout(() => {
+      executeInspectionSubmission();
+    }, 160);
+    return;
+  }
+
+  // Case B: Mismatch
+  if (scanned.length >= 16 || isEnterKey) {
+    if (dom.verifyScanStatus) {
+      dom.verifyScanStatus.className = 'verify-scan-status mismatch';
+      dom.verifyScanStatus.textContent = `⚠ SERIAL MISMATCH! Scanned barcode [${scanned}] does NOT match active MQTT serial [${expected}].`;
+    }
+    soundFx.beep(250, 0.18, 'sawtooth');
+    dom.verifyBarcodeInput.select();
+
+    if (dom.btnVerifySwitchScanned) {
+      dom.btnVerifySwitchScanned.style.display = 'inline-block';
+      dom.btnVerifySwitchScanned.textContent = `Switch Active Module to Scanned Serial (${scanned})`;
+      dom.btnVerifySwitchScanned.onclick = () => {
+        closeSerialVerifyModal(false);
+        loadModule(scanned, 'SCANNER');
+        showToast(`Switched active module to scanned serial: ${scanned}`, 'info');
+      };
+    }
+  }
+}
+
+/**
+ * Execute Actual Inspection Submission (POST /api/inspections)
+ */
+function executeInspectionSubmission() {
+  closeSerialVerifyModal(false);
 
   const payload = {
     module_id: state.moduleId,
@@ -1161,7 +1459,7 @@ function submitGrade() {
       showToast(`Module ${state.moduleId} graded as [${state.grade}] successfully`, 'success');
       soundFx.beep(950, 0.12);
 
-      // Reset for next module
+      // Reset for next module and advance queue
       resetModuleAfterSubmit();
       fetchGradingHistory();
     })
@@ -1179,33 +1477,54 @@ function resetModuleAfterSubmit() {
   recomputeAllowedGrades();
   updateSummaryAndHistory();
 
-  // Reset scanner input and focus for next module
-  state.moduleId = '';
-  if (dom.moduleIdInput) {
-    dom.moduleIdInput.value = '';
-    dom.moduleIdInput.focus();
-  }
-  if (dom.summaryModuleId) {
-    dom.summaryModuleId.textContent = 'Ready for Next Module';
+  // Advance to next queued module if available
+  if (state.mqttQueue.length > 0) {
+    const nextMod = state.mqttQueue.shift();
+    updateQueueDisplay();
+    loadModule(nextMod.panel_id, nextMod.channel);
+    state.moduleReadyForImmediateLoad = false;
+    showToast(`Loaded next queued module [${nextMod.channel}]: ${nextMod.panel_id}`, 'success');
+  } else {
+    // Reset scanner input and wait for next module from CH88 / CH89
+    state.moduleId = '';
+    state.activeChannel = '';
+    state.moduleReadyForImmediateLoad = true;
+    if (dom.moduleIdInput) {
+      dom.moduleIdInput.value = '';
+      dom.moduleIdInput.focus();
+    }
+    if (dom.summaryModuleId) {
+      dom.summaryModuleId.textContent = 'Waiting for Next Module (CH88/CH89)...';
+    }
+    updateQueueDisplay();
   }
 }
 
 /**
  * Load Module Serial & Defects
  */
-function loadModule(serial) {
+function loadModule(serial, channel = 'MANUAL') {
   if (!serial) return;
   const cleanMod = serial.trim().toUpperCase().slice(0, 16);
   state.moduleId = cleanMod;
+  state.activeChannel = channel || 'MANUAL';
+  state.moduleReadyForImmediateLoad = false;
 
   if (dom.moduleIdInput) dom.moduleIdInput.value = cleanMod;
   if (dom.summaryModuleId) dom.summaryModuleId.textContent = cleanMod;
 
+  updateQueueDisplay();
+
   // Broadcast to Screen 2
   broadcastModuleChange(cleanMod);
 
-  // Fetch defects for this module
-  fetchModuleDefects(cleanMod);
+  // Check prefetched cache or fetch defects
+  const cached = state.prefetchedCache.get(cleanMod);
+  if (cached && cached.defects) {
+    applyDefectsData(cached.defects);
+  } else {
+    fetchModuleDefects(cleanMod);
+  }
 }
 
 /**
@@ -1217,51 +1536,58 @@ function fetchModuleDefects(moduleId) {
   fetch(`${config.apiBaseUrl}/api/defects?module_id=${encodeURIComponent(moduleId)}`)
     .then(res => res.json())
     .then(data => {
-      const defectsList = data.defects || [];
-      state.defects.clear();
-
-      defectsList.forEach(d => {
-        const coord = d.defect_location || d.defect_cell || d.cell_coord || '';
-        if (!coord) return;
-        const side = (d.side || 'front').toLowerCase();
-        const code = d.defect_code || 'G1';
-        const preset = DEFECT_CATALOG[code] || {
-          code: code,
-          name: d.defect_type || 'Defect',
-          side: side,
-          category: 'Visual',
-          rawGrades: 'A,B,R',
-          allowedGrades: ['A', 'B', 'X']
-        };
-
-        let locType = 'front_cell';
-        if (coord === 'BBAR') locType = 'front_busbar';
-        else if (['JBX1', 'JBX2', 'JBX3'].includes(coord)) locType = 'back_jbox';
-        else if (['FRM', 'FRAME', 'FRMT', 'FRMB', 'FRML', 'FRMR'].includes(coord)) locType = `${side}_frame`;
-        else if (side === 'back') locType = 'back_cell';
-
-        const defectItem = {
-          coord: coord,
-          side: side,
-          locationType: locType,
-          defectCode: preset.code,
-          defectName: preset.name,
-          category: preset.category || 'Visual',
-          rawGrades: preset.rawGrades || 'A,B,R',
-          allowedGrades: preset.allowedGrades || ['A', 'B', 'X'],
-          notes: d.notes || '',
-          timestamp: d.tested_at ? formatTimeShort(d.tested_at) : new Date().toLocaleTimeString(),
-          operatorName: d.tester_name || 'Inspector'
-        };
-
-        state.defects.set(`${side}:${coord}`, defectItem);
-      });
-
-      updateSummaryAndHistory();
-      renderDefectPins();
-      recomputeAllowedGrades();
+      const entry = state.prefetchedCache.get(moduleId) || {};
+      entry.defects = data;
+      state.prefetchedCache.set(moduleId, entry);
+      applyDefectsData(data);
     })
     .catch(() => { });
+}
+
+function applyDefectsData(data) {
+  const defectsList = (data && data.defects) || [];
+  state.defects.clear();
+
+  defectsList.forEach(d => {
+    const coord = d.defect_location || d.defect_cell || d.cell_coord || '';
+    if (!coord) return;
+    const side = (d.side || 'front').toLowerCase();
+    const code = d.defect_code || 'G1';
+    const preset = DEFECT_CATALOG[code] || {
+      code: code,
+      name: d.defect_type || 'Defect',
+      side: side,
+      category: 'Visual',
+      rawGrades: 'A,B,R',
+      allowedGrades: ['A', 'B', 'X']
+    };
+
+    let locType = 'front_cell';
+    if (coord === 'BBAR') locType = 'front_busbar';
+    else if (['JBX1', 'JBX2', 'JBX3'].includes(coord)) locType = 'back_jbox';
+    else if (['FRM', 'FRAME', 'FRMT', 'FRMB', 'FRML', 'FRMR'].includes(coord)) locType = `${side}_frame`;
+    else if (side === 'back') locType = 'back_cell';
+
+    const defectItem = {
+      coord: coord,
+      side: side,
+      locationType: locType,
+      defectCode: preset.code,
+      defectName: preset.name,
+      category: preset.category || 'Visual',
+      rawGrades: preset.rawGrades || 'A,B,R',
+      allowedGrades: preset.allowedGrades || ['A', 'B', 'X'],
+      notes: d.notes || '',
+      timestamp: d.tested_at ? formatTimeShort(d.tested_at) : new Date().toLocaleTimeString(),
+      operatorName: d.tester_name || 'Inspector'
+    };
+
+    state.defects.set(`${side}:${coord}`, defectItem);
+  });
+
+  updateSummaryAndHistory();
+  renderDefectPins();
+  recomputeAllowedGrades();
 }
 
 /**
@@ -1338,7 +1664,7 @@ function attachEventListeners() {
         e.preventDefault();
         const val = dom.moduleIdInput.value.trim().toUpperCase().slice(0, 16);
         if (val) {
-          loadModule(val);
+          loadModule(val, 'MANUAL');
           showToast(`Module ${val} scanned`, 'success');
           soundFx.beep(800, 0.06);
         }
@@ -1348,7 +1674,10 @@ function attachEventListeners() {
     dom.moduleIdInput.addEventListener('input', () => {
       const val = dom.moduleIdInput.value.trim().toUpperCase().slice(0, 16);
       state.moduleId = val;
+      state.activeChannel = 'MANUAL';
+      state.moduleReadyForImmediateLoad = false;
       if (dom.summaryModuleId) dom.summaryModuleId.textContent = val || 'Pending Serial';
+      updateQueueDisplay();
       broadcastModuleChange(val);
     });
   }
@@ -1476,9 +1805,8 @@ function attachEventListeners() {
     dom.btnTriggerMqttSim.addEventListener('click', () => {
       const p = dom.simPanelInput ? dom.simPanelInput.value.trim().toUpperCase() : '';
       if (p) {
-        loadModule(p);
+        handleIncomingMqttSerial(p, 'CH88');
         if (dom.simulatorModal) dom.simulatorModal.classList.remove('open');
-        showToast(`Published panel arrival: ${p}`, 'success');
       }
     });
   }
@@ -1487,9 +1815,8 @@ function attachEventListeners() {
     btn.addEventListener('click', () => {
       const p = btn.dataset.panel;
       if (p) {
-        loadModule(p);
+        handleIncomingMqttSerial(p, 'CH89');
         if (dom.simulatorModal) dom.simulatorModal.classList.remove('open');
-        showToast(`Simulated arrival: ${p}`, 'info');
       }
     });
   });
@@ -1515,8 +1842,64 @@ function attachEventListeners() {
     dom.btnLogoutCmms.addEventListener('click', logoutCMMS);
   }
 
+  // Serial Verification Modal Actions
+  if (dom.btnVerifyConfirm) {
+    dom.btnVerifyConfirm.addEventListener('click', () => {
+      executeInspectionSubmission();
+    });
+  }
+
+  if (dom.btnVerifyCancel) {
+    dom.btnVerifyCancel.addEventListener('click', () => {
+      closeSerialVerifyModal(true);
+    });
+  }
+
+  if (dom.btnCloseVerifyModal) {
+    dom.btnCloseVerifyModal.addEventListener('click', () => {
+      closeSerialVerifyModal(true);
+    });
+  }
+
+  // Physical Barcode Scanner verification input listeners
+  if (dom.verifyBarcodeInput) {
+    dom.verifyBarcodeInput.addEventListener('input', () => {
+      handleBarcodeVerification(false);
+    });
+    dom.verifyBarcodeInput.addEventListener('paste', () => {
+      setTimeout(() => handleBarcodeVerification(false), 20);
+    });
+    dom.verifyBarcodeInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleBarcodeVerification(true);
+      }
+    });
+  }
+
   // Keyboard Hotkeys
   window.addEventListener('keydown', (e) => {
+    // If serial verification modal is open, handle verification keys
+    if (dom.serialVerifyModal && dom.serialVerifyModal.classList.contains('open')) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeSerialVerifyModal(true);
+        return;
+      }
+      if (e.key === 'Enter') {
+        if (document.activeElement !== dom.verifyBarcodeInput) {
+          e.preventDefault();
+          handleBarcodeVerification(true);
+          return;
+        }
+      }
+      // If typing printable characters and focus is not inside verify input, redirect focus to verify input
+      if (dom.verifyBarcodeInput && document.activeElement !== dom.verifyBarcodeInput && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        dom.verifyBarcodeInput.focus();
+      }
+      return;
+    }
+
     // Escape closes popover/modals
     if (e.key === 'Escape') {
       closeBubble();
@@ -1646,25 +2029,85 @@ function checkBackendHealth() {
 }
 
 function initConveyorEventStream() {
-  if (typeof EventSource === 'undefined') return;
-  try {
-    const sse = new EventSource(`${config.apiBaseUrl}/api/conveyor/stream`);
-    sse.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data && data.module_id) {
-          loadModule(data.module_id);
-          showToast(`Conveyor arrival: ${data.module_id}`, 'info');
-        }
-      } catch (e) { }
-    };
-    sse.onopen = () => {
-      state.isMqttConnected = true;
-      if (dom.pillMqttStatus) {
-        dom.pillMqttStatus.className = 'status-indicator-pill status-live';
+  const handleEventData = (rawData) => {
+    try {
+      const data = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
+      if (!data) return;
+
+      // Conveyor channels CH88 and CH89
+      if (data.ch88_serial) {
+        handleIncomingMqttSerial(data.ch88_serial, 'CH88');
       }
-    };
-  } catch (e) { }
+      if (data.ch89_serial) {
+        handleIncomingMqttSerial(data.ch89_serial, 'CH89');
+      }
+
+      // Single panel event (ignore synthetic initial baseline placeholder)
+      const panelId = data.module_id || data.panel_id || (data.current_panel && data.current_panel.panel_id);
+      const panelSource = data.source || (data.current_panel && data.current_panel.source) || '';
+      if (panelId && panelSource !== 'Initial Baseline') {
+        handleIncomingMqttSerial(panelId, data.channel || (data.current_panel && data.current_panel.channel) || 'MQTT');
+      }
+    } catch (e) { }
+  };
+
+  if (typeof EventSource !== 'undefined') {
+    try {
+      const streamUrl = `${config.apiBaseUrl}/api/stream`;
+      const sse = new EventSource(streamUrl);
+
+      sse.onmessage = (event) => {
+        handleEventData(event.data);
+      };
+
+      sse.addEventListener('PANEL_ARRIVED', (event) => {
+        handleEventData(event.data);
+      });
+
+      sse.onopen = () => {
+        state.isMqttConnected = true;
+        if (dom.pillMqttStatus) {
+          dom.pillMqttStatus.className = 'status-indicator-pill status-live';
+        }
+      };
+
+      sse.onerror = () => {
+        state.isMqttConnected = false;
+        if (dom.pillMqttStatus) {
+          dom.pillMqttStatus.className = 'status-indicator-pill';
+        }
+      };
+    } catch (e) { }
+  }
+
+  // Poll current module and CH88/CH89 conveyor status immediately & every 3 seconds
+  const pollCurrentConveyor = () => {
+    fetch(`${config.apiBaseUrl}/api/module/current`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (!data) return;
+        if (data.mqtt_connected !== undefined) {
+          state.isMqttConnected = !!data.mqtt_connected;
+          if (dom.pillMqttStatus) {
+            dom.pillMqttStatus.className = state.isMqttConnected
+              ? 'status-indicator-pill status-live'
+              : 'status-indicator-pill';
+          }
+        }
+        if (data.ch88_serial) {
+          handleIncomingMqttSerial(data.ch88_serial, 'CH88');
+        }
+        if (data.ch89_serial) {
+          handleIncomingMqttSerial(data.ch89_serial, 'CH89');
+        }
+        if (data.panel_id && data.source !== 'Initial Baseline') {
+          handleIncomingMqttSerial(data.panel_id, data.channel || 'MQTT');
+        }
+      })
+      .catch(() => {});
+  };
+  pollCurrentConveyor();
+  setInterval(pollCurrentConveyor, 3000);
 }
 
 /**
