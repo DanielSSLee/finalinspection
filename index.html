@@ -24,29 +24,11 @@
 
       <!-- Real-Time Hardware & DB Integration Status Pills -->
       <div class="header-segment status-pills-group" id="header-status-group">
-        <div class="status-indicator-pill status-live" id="pill-db-status"
-          title="Database Connection: Immediate sync active">
-          <span>DB LIVE</span>
-        </div>
-        <div class="status-indicator-pill status-live" id="pill-mqtt-status"
-          title="Conveyor MQTT Sensor: Listening for panel arrivals">
-          <span>MQTT</span>
-        </div>
         <div class="status-indicator-pill status-queue" id="mqtt-queue-pill"
-          title="Conveyor Channel &amp; Inspection Queue Status (CH88 / CH89)">
+          title="Active Conveyor Channel &amp; Queued Modules">
           <span class="queue-channel-badge" id="queue-channel-badge">CH88</span>
-          <span class="queue-count-text" id="queue-count-text">QUEUE: 0</span>
+          <span class="queue-count-text" id="queue-count-text">Q: 0</span>
         </div>
-        <button type="button" class="status-indicator-pill btn-pill-action" id="pill-sim-trigger"
-          title="Hardware & Conveyor Simulator">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
-            <circle cx="12" cy="12" r="3"></circle>
-            <path
-              d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
-            </path>
-          </svg>
-          <span>Hardware</span>
-        </button>
       </div>
 
       <!-- Module Scanner & Authenticated CMMS Inspector Badge -->
@@ -130,7 +112,7 @@
           <div class="strip-title-group">
             <span class="strip-title">LOGGED DEFECTS</span>
             <span class="count-badge" id="history-badge-count">0</span>
-            <span class="strip-active-module" id="summary-module-id">Pending Serial</span>
+            <span class="strip-active-module" id="summary-module-id">Scan Barcode or Waiting for MQTT...</span>
             <span class="strip-grade-preview" id="summary-grade-badge">Pending Selection</span>
           </div>
           <div class="strip-controls">
@@ -436,7 +418,7 @@
                 <span class="verify-field-label">MODULE SERIAL NUMBER</span>
                 <span class="verify-channel-badge" id="verify-modal-channel">MQTT CH88</span>
               </div>
-              <div class="verify-serial-display" id="verify-modal-serial">USM0112208260078</div>
+              <div class="verify-serial-display" id="verify-modal-serial">--</div>
             </div>
 
             <div class="verify-meta-grid">

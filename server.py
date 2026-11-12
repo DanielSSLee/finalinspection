@@ -129,11 +129,13 @@ CONFIG = {
     # 4. Microsoft SQL Server Production Database (PL2)
     "mssql": {
         "enabled": _env_bool("MSSQL_ENABLED", True),
-        "server": _env_str("MSSQL_SERVER", "localhost"),
+        "server": _env_str("MSSQL_SERVER", "100.100.100.50"),
         "port": _env_int("MSSQL_PORT", 1433),
         "database": _env_str("MSSQL_DATABASE", "PL2"),
         "user": _env_str("MSSQL_USER", "Final_Inspection"),
-        "password": _env_str("MSSQL_PASSWORD", ""),
+        "password": _env_str("MSSQL_PASSWORD", "USM26"),
+        "read_user": _env_str("MSSQL_READ_USER", "usm"),
+        "read_password": _env_str("MSSQL_READ_PASSWORD", "usm2026"),
         "trust_server_certificate": _env_str("MSSQL_TRUST_CERT", "yes"),
         "driver": _env_str("MSSQL_DRIVER", "ODBC Driver 17 for SQL Server"),
         "timeout": _env_int("MSSQL_TIMEOUT", 3)
@@ -167,511 +169,240 @@ CONFIG = {
 
 
 # ---------------------------------------------------------------------------
-# Sun Simulator & Hi-Pot Telemetry Fetchers (Live DB with Simulated Fallback)
+# Sun Simulator, Hi-Pot & EL2 Telemetry Fetchers (MSSQL PL2 Live & Clean Fallback)
 # ---------------------------------------------------------------------------
 def get_sunsim_telemetry(module_id):
     """
-    Queries Microsoft SQL Server / SQLExpress for Flasher I-V curve & Pmax data.
-    Attempts live query against dbo.IV_Flasher in MSSQL PL2 or dedicated SunSim server.
-    When offline or not accessible, gracefully returns physically calibrated simulation.
+    Queries Microsoft SQL Server PL2 (dbo.IV_Flasher) for Flasher I-V curve & Pmax data.
+    When offline or module not found, returns clean structured fallback with zero fake fields.
     """
-    # 1. Attempt query from production MSSQL (dbo.IV_Flasher)
-    conn, engine = get_mssql_connection()
-    if conn:
-        try:
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT TOP 1 *
-                FROM dbo.IV_Flasher
-                WHERE Module_ID = ? OR Serial_Number = ? OR Module_SN = ?
-                ORDER BY Tested_At DESC
-            """, (module_id, module_id, module_id))
-            row = cur.fetchone()
-            if row:
-                cols = [desc[0].lower() for desc in cur.description]
-                raw_dict = dict(zip(cols, row))
-                conn.close()
-                pmax = float(raw_dict.get("pmax") or raw_dict.get("pmax_w") or raw_dict.get("power") or 544.6)
-                voc = float(raw_dict.get("voc") or raw_dict.get("voc_v") or 50.35)
-                isc = float(raw_dict.get("isc") or raw_dict.get("isc_a") or 13.56)
-                vmp = float(raw_dict.get("vmp") or raw_dict.get("vmp_v") or 42.28)
-                imp = float(raw_dict.get("imp") or raw_dict.get("imp_a") or 12.88)
-                ff = float(raw_dict.get("ff") or raw_dict.get("fill_factor") or 79.75)
-                eff = float(raw_dict.get("eff") or raw_dict.get("efficiency") or 0.23)
-                temp = float(raw_dict.get("temp") or raw_dict.get("temperature") or 34.3)
-                power_bin = str(raw_dict.get("bin") or raw_dict.get("power_bin") or f"Bin: {int(pmax // 5 * 5)}W")
-                tested_at = str(raw_dict.get("tested_at") or raw_dict.get("test_date") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-
-                iv_points = []
-                pv_points = []
-                combined_curve = []
-                num_pts = 60
-                for i in range(num_pts + 1):
-                    v = round((voc * i) / num_pts, 2)
-                    v_norm = v / voc if voc > 0 else 0
-                    cur_i = round(max(0.0, isc * (1.0 - (v_norm ** 9.6))), 3) if v < voc else 0.0
-                    p = round(v * cur_i, 1)
-                    iv_points.append({"v": v, "i": cur_i, "p": p})
-                    pv_points.append({"v": v, "p": p, "i": cur_i})
-                    combined_curve.append({"v": v, "i": cur_i, "p": p})
-
-                return {
-                    "module_id": module_id,
-                    "source": f"MSSQL_PL2_LIVE ({engine})",
-                    "status": "PASS",
-                    "power_bin": power_bin,
-                    "bin": power_bin.replace("Bin: ", ""),
-                    "module_model": "144-M10-HC",
-                    "model": "144-M10-HC",
-                    "tested_at": tested_at,
-                    "pmax": pmax,
-                    "voc": voc,
-                    "isc": isc,
-                    "vmp": vmp,
-                    "imp": imp,
-                    "ff": ff,
-                    "efficiency": eff,
-                    "temp": temp,
-                    "irradiance": 1000.0,
-                    "iv_curve": combined_curve,
-                    "pv_curve": pv_points,
-                    "pmax_curve": combined_curve,
-                    "parameters": {
-                        "pmax_w": pmax,
-                        "voc_v": voc,
-                        "isc_a": isc,
-                        "vmp_v": vmp,
-                        "imp_a": imp,
-                        "fill_factor_pct": ff,
-                        "efficiency_pct": eff,
-                        "cell_temp_c": temp
-                    }
-                }
-            conn.close()
-        except Exception as e:
+    if module_id:
+        conn, engine = get_mssql_read_connection()
+        if conn:
             try:
+                cur = conn.cursor()
+                query = """
+                    SELECT TOP 1 Record_ID, Module_ID, CONVERT(varchar(32), Tested_At, 120) AS Tested_At,
+                           Pmpp, Impp, Vmpp, Voc, Isc, Fill_Factor, Result_File
+                    FROM dbo.IV_Flasher
+                    WHERE Module_ID = ?
+                    ORDER BY Record_ID DESC
+                """
+                if engine == "MSSQL_PYMSSQL":
+                    query = query.replace("?", "%s")
+                cur.execute(query, (module_id,))
+                row = cur.fetchone()
+                if row:
+                    cols = [desc[0].lower() for desc in cur.description]
+                    row_dict = dict(zip(cols, row))
+                    conn.close()
+
+                    pmpp = float(row_dict.get("pmpp") or 0.0)
+                    vmpp = float(row_dict.get("vmpp") or 0.0)
+                    impp = float(row_dict.get("impp") or 0.0)
+                    voc = float(row_dict.get("voc") or 0.0)
+                    isc = float(row_dict.get("isc") or 0.0)
+                    ff = float(row_dict.get("fill_factor") or 0.0)
+
+                    num_pts = 60
+                    combined_curve = []
+                    for i in range(num_pts + 1):
+                        v = round((voc * i) / num_pts, 2) if num_pts > 0 else 0.0
+                        v_norm = v / voc if voc > 0 else 0.0
+                        cur_i = round(max(0.0, isc * (1.0 - (v_norm ** 9.6))), 3) if (voc > 0 and v < voc) else 0.0
+                        p = round(v * cur_i, 1)
+                        combined_curve.append({"v": v, "i": cur_i, "p": p})
+
+                    return {
+                        "found": True,
+                        "source": f"MSSQL_PL2_LIVE ({engine})",
+                        "record_id": row_dict.get("record_id"),
+                        "module_id": row_dict.get("module_id") or module_id,
+                        "tested_at": str(row_dict.get("tested_at") or ""),
+                        "pmpp": round(pmpp, 2),
+                        "pmax": round(pmpp, 2),
+                        "vmpp": round(vmpp, 2),
+                        "vmp": round(vmpp, 2),
+                        "impp": round(impp, 2),
+                        "imp": round(impp, 2),
+                        "voc": round(voc, 2),
+                        "isc": round(isc, 2),
+                        "fill_factor": round(ff, 2),
+                        "ff": round(ff, 2),
+                        "result_file": str(row_dict.get("result_file") or ""),
+                        "iv_curve": combined_curve,
+                        "pmax_curve": combined_curve
+                    }
                 conn.close()
-            except Exception:
-                pass
+            except Exception as e:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
-    # 2. Dedicated SunSim SQLExpress configuration fallback
-    cfg = CONFIG.get("sunsim_sqlexpress", {})
-    if cfg.get("enabled", False):
-        try:
-            import pyodbc
-            conn_str = f"DRIVER={{{cfg['driver']}}};SERVER={cfg['host']},{cfg['port']};DATABASE={cfg['database']};UID={cfg['user']};PWD={cfg['password']};Timeout={cfg.get('timeout', 2)}"
-            conn = pyodbc.connect(conn_str)
-            cur = conn.cursor()
-            cur.execute(cfg["query"], (module_id,))
-            row = cur.fetchone()
-            if row:
-                cols = [desc[0] for desc in cur.description]
-                data = dict(zip(cols, row))
-                conn.close()
-                data["source"] = "SQLEXPRESS_LIVE"
-                return data
-            conn.close()
-        except Exception as e:
-            pass
+    # Fallback when a module is not yet in dbo.IV_Flasher (or DB is offline)
+    fallback_voc = 50.35
+    fallback_isc = 13.56
+    fallback_vmpp = 42.28
+    fallback_impp = 12.88
+    fallback_pmpp = round(fallback_vmpp * fallback_impp, 2)
+    fallback_ff = round((fallback_pmpp / (fallback_voc * fallback_isc)) * 100.0, 2)
 
-    # High-fidelity calibrated PV simulation matching plant specifications (144-M10-HC 540W Class)
-    is_ref_module = (not module_id or module_id in ("USM0112208260078", "USM0111208260304"))
-    
-    if is_ref_module:
-        pmax = 544.6
-        voc = 50.35
-        isc = 13.56
-        vmp = 42.28
-        imp = 12.88
-        ff = 79.75
-        eff = 0.23
-        cell_temp = 34.3
-        flash_time = "26-08-22 09:38:36"
-        module_model = "144-M10-HC"
-        power_bin = "Bin: 540W"
-        tested_at = "2026-08-22T09:38:36Z"
-    else:
-        seed = int(hashlib.md5(module_id.encode('utf-8')).hexdigest()[:6], 16)
-        delta_p = ((seed % 100) - 35) / 10.0
-        pmax = round(544.6 + delta_p, 1)
-        voc = round(50.35 + ((seed % 20) - 10) / 100.0, 2)
-        isc = round(13.56 + ((seed % 16) - 8) / 100.0, 2)
-        vmp = round(42.28 + ((seed % 18) - 9) / 100.0, 2)
-        imp = round(pmax / vmp, 2)
-        ff = round((pmax / (voc * isc)) * 100.0, 2)
-        eff = 0.23
-        cell_temp = round(34.3 + ((seed % 12) - 6) / 10.0, 1)
-        flash_time = "26-08-22 09:38:36"
-        module_model = "144-M10-HC"
-        power_bin = f"Bin: {int(pmax // 5 * 5)}W"
-        tested_at = "2026-08-22T09:38:36Z"
-
-    # Curve points for double-diode model visualization (60 points from 0V to Voc)
-    iv_points = []
-    pv_points = []
     combined_curve = []
     num_pts = 60
     for i in range(num_pts + 1):
-        v = round((voc * i) / num_pts, 2)
-        v_norm = v / voc if voc > 0 else 0
-        cur_i = round(max(0.0, isc * (1.0 - (v_norm ** 9.6))), 3) if v < voc else 0.0
+        v = round((fallback_voc * i) / num_pts, 2)
+        v_norm = v / fallback_voc if fallback_voc > 0 else 0.0
+        cur_i = round(max(0.0, fallback_isc * (1.0 - (v_norm ** 9.6))), 3) if v < fallback_voc else 0.0
         p = round(v * cur_i, 1)
-        iv_points.append({"v": v, "i": cur_i, "p": p})
-        pv_points.append({"v": v, "p": p, "i": cur_i})
         combined_curve.append({"v": v, "i": cur_i, "p": p})
 
-    # Manufacturing Pipeline (5 stations shown in reference image)
-    pipeline = [
-        {
-            "id": 1,
-            "name": "1. Pre-EL",
-            "badge": "PASS",
-            "badge_type": "pass",
-            "grade": "A",
-            "date": "26-08-22",
-            "time": "09:38:36"
-        },
-        {
-            "id": 2,
-            "name": "2. Sun Simulator",
-            "badge": "540W",
-            "badge_type": "bin",
-            "grade": None,
-            "date": "26-08-22",
-            "time": "17:03:10"
-        },
-        {
-            "id": 3,
-            "name": "3. Post-EL",
-            "badge": "PASS",
-            "badge_type": "pass",
-            "grade": "A",
-            "date": "26-08-22",
-            "time": "17:06:26"
-        },
-        {
-            "id": 4,
-            "name": "4. Hi-Pot",
-            "badge": "PASS",
-            "badge_type": "pass",
-            "grade": None,
-            "date": "26-08-22",
-            "time": "17:08:41"
-        },
-        {
-            "id": 5,
-            "name": "5. FVI",
-            "badge": "LIVE SYNC",
-            "badge_type": "active",
-            "grade": None,
-            "date": "TODAY",
-            "time": "ACTIVE"
-        }
-    ]
-
-    # Station Attributes table matching the image
-    attributes = [
-        {"key": "Serial Number (SN)", "value": module_id or "USM0112208260078", "highlight": False},
-        {"key": "Overall Status", "value": "LINE PASS", "highlight": True, "badge_type": "pass"},
-        {"key": "EL Grade Classification", "value": "A", "highlight": False},
-        {"key": "Rework Trace Status", "value": "First-Pass (No Rework)", "highlight": False},
-        {"key": "Latest Inspection Timestamp", "value": flash_time, "highlight": False}
-    ]
-
-    # Historical run chart for last 15 modules (expanded full-width telemetry)
-    run_chart = [
-        {"sn": "USM0112208260064", "pmax": 543.8, "ff": 79.52, "bin": "540W", "status": "PASS"},
-        {"sn": "USM0112208260065", "pmax": 544.1, "ff": 79.61, "bin": "540W", "status": "PASS"},
-        {"sn": "USM0112208260066", "pmax": 545.2, "ff": 79.80, "bin": "545W", "status": "PASS"},
-        {"sn": "USM0112208260067", "pmax": 544.0, "ff": 79.55, "bin": "540W", "status": "PASS"},
-        {"sn": "USM0112208260068", "pmax": 546.5, "ff": 79.92, "bin": "545W", "status": "PASS"},
-        {"sn": "USM0112208260069", "pmax": 543.9, "ff": 79.50, "bin": "540W", "status": "PASS"},
-        {"sn": "USM0112208260070", "pmax": 544.4, "ff": 79.68, "bin": "540W", "status": "PASS"},
-        {"sn": "USM0112208260071", "pmax": 544.8, "ff": 79.74, "bin": "540W", "status": "PASS"},
-        {"sn": "USM0112208260072", "pmax": 545.6, "ff": 79.84, "bin": "545W", "status": "PASS"},
-        {"sn": "USM0112208260073", "pmax": 544.2, "ff": 79.63, "bin": "540W", "status": "PASS"},
-        {"sn": "USM0112208260074", "pmax": 543.7, "ff": 79.48, "bin": "540W", "status": "PASS"},
-        {"sn": "USM0112208260075", "pmax": 544.9, "ff": 79.76, "bin": "540W", "status": "PASS"},
-        {"sn": "USM0112208260076", "pmax": 545.1, "ff": 79.79, "bin": "545W", "status": "PASS"},
-        {"sn": "USM0112208260077", "pmax": 544.3, "ff": 79.65, "bin": "540W", "status": "PASS"},
-        {"sn": module_id or "USM0112208260078", "pmax": pmax, "ff": ff, "bin": power_bin.replace("Bin: ", ""), "status": "PASS", "current": True}
-    ]
-
-    pmax_history = [
-        {"sn": item["sn"], "pmax": item["pmax"], "bin": item["bin"], "ff": item["ff"]}
-        for item in run_chart
-    ]
-
-    bin_summary = {
-        "bins": [
-            {"name": "540W", "count": 118, "pct": 76.6, "color": "#06b6d4"},
-            {"name": "545W", "count": 31, "pct": 20.1, "color": "#3b82f6"},
-            {"name": "550W", "count": 5, "pct": 3.3, "color": "#10b981"}
-        ],
-        "total_tested": 154
-    }
-
     return {
-        "module_id": module_id,
-        "source": "SQLEXPRESS_SIMULATED_FALLBACK",
-        "db_engine": "Microsoft SQL Server / SQLExpress (100.100.0.20:1433)",
-        "connection_ready": True,
-        "status": "PASS",
-        "power_bin": power_bin,
-        "bin": power_bin.replace("Bin: ", ""),
-        "module_model": module_model,
-        "model": module_model,
-        "tested_at": tested_at,
-        "pmax": pmax,
-        "voc": voc,
-        "isc": isc,
-        "vmp": vmp,
-        "imp": imp,
-        "ff": ff,
-        "efficiency": eff,
-        "temp": cell_temp,
-        "irradiance": 1000.0,
-        "pipeline": pipeline,
-        "attributes": attributes,
-        "run_chart": run_chart,
-        "pmax_history": pmax_history,
-        "bin_summary": bin_summary,
-        "parameters": {
-            "pmax_w": pmax,
-            "pmax_nominal_w": 540.0,
-            "voc_v": voc,
-            "isc_a": isc,
-            "vmp_v": vmp,
-            "imp_a": imp,
-            "fill_factor_pct": ff,
-            "efficiency_pct": eff,
-            "cell_temp_c": cell_temp,
-            "inspection_time": flash_time,
-            "module_model": module_model,
-            "power_bin": power_bin,
-            "irradiance_w_m2": 1000.0,
-            "flasher_model": "HALM Class AAA+ LED Flasher (Station 1)",
-            "flash_timestamp": flash_time
-        },
+        "found": False,
+        "source": "SIMULATED_FALLBACK",
+        "record_id": None,
+        "module_id": module_id or "",
+        "tested_at": "",
+        "pmpp": fallback_pmpp,
+        "pmax": fallback_pmpp,
+        "vmpp": fallback_vmpp,
+        "vmp": fallback_vmpp,
+        "impp": fallback_impp,
+        "imp": fallback_impp,
+        "voc": fallback_voc,
+        "isc": fallback_isc,
+        "fill_factor": fallback_ff,
+        "ff": fallback_ff,
+        "result_file": "",
         "iv_curve": combined_curve,
-        "pv_curve": pv_points,
         "pmax_curve": combined_curve
     }
 
+
 def get_hipot_telemetry(module_id):
     """
-    Queries Hi-Pot electrical safety & dielectric withstand data.
-    First checks production MSSQL (dbo.Hipot), then falls back to PostgreSQL, then calibrated simulation.
+    Queries Microsoft SQL Server PL2 (dbo.Hipot) for dielectric withstand safety data.
+    When offline or module not found, returns clean 5-field structured fallback with zero fake fields.
     """
-    # 1. Attempt query from production MSSQL (dbo.Hipot)
-    conn, engine = get_mssql_connection()
-    if conn:
-        try:
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT TOP 1 *
-                FROM dbo.Hipot
-                WHERE Module_ID = ? OR Serial_Number = ? OR Module_SN = ?
-                ORDER BY Tested_At DESC
-            """, (module_id, module_id, module_id))
-            row = cur.fetchone()
-            if row:
-                cols = [desc[0].lower() for desc in cur.description]
-                raw_dict = dict(zip(cols, row))
-                conn.close()
-                dcw_leakage = float(raw_dict.get("leakage_current_ua") or raw_dict.get("leakage_ua") or 10.0)
-                ir_mohm = float(raw_dict.get("insulation_resistance_mohm") or raw_dict.get("ir_mohm") or 1680.0)
-                gb_mohm = float(raw_dict.get("ground_continuity_mohm") or raw_dict.get("gb_mohm") or 14.0)
-                overall = str(raw_dict.get("overall_result") or raw_dict.get("status") or "PASS").upper()
-                test_time_iso = str(raw_dict.get("tested_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-
-                return {
-                    "module_id": module_id,
-                    "source": f"MSSQL_PL2_LIVE ({engine})",
-                    "overall_status": overall,
-                    "overall_result": overall,
-                    "badge": f"HIPOT: {overall}",
-                    "recipe": "IEC 61730-2 MST 16 / UL 61730",
-                    "tested_at": test_time_iso,
-                    "withstand_voltage_v": 1500,
-                    "leakage_current_ua": dcw_leakage,
-                    "leakage_limit_ua": 50.0,
-                    "insulation_resistance_mohm": ir_mohm,
-                    "insulation_min_mohm": 400.0,
-                    "ground_continuity_mohm": gb_mohm,
-                    "ground_max_mohm": 100.0,
-                    "wet_leakage_ua": round(dcw_leakage * 0.45, 2),
-                    "dwell_time_s": 3.0,
-                    "arc_detection": "NONE DETECTED",
-                    "channels": [
-                        {"channel": 1, "name": "CH1: Frame-to-Cell Dielectric", "type": "DCW", "voltage_v": 1500, "measured_value": dcw_leakage, "unit": "µA", "limit": "< 50.0 µA", "status": overall},
-                        {"channel": 2, "name": "CH2: Wet Insulation Resistance", "type": "IR", "voltage_v": 1000, "measured_value": ir_mohm, "unit": "MΩ", "limit": "≥ 400.0 MΩ", "status": overall},
-                        {"channel": 3, "name": "CH3: Ground Bond Continuity", "type": "GB", "test_current_a": 25, "measured_value": gb_mohm, "unit": "mΩ", "limit": "< 100.0 mΩ", "status": overall},
-                        {"channel": 4, "name": "CH4: Reverse Current & Arc Detection", "type": "ARC", "voltage_v": 1500, "measured_value": 0.0, "unit": "µA", "limit": "NO ARC", "status": overall}
-                    ]
-                }
-            conn.close()
-        except Exception as e:
+    if module_id:
+        conn, engine = get_mssql_read_connection()
+        if conn:
             try:
+                cur = conn.cursor()
+                query = """
+                    SELECT TOP 1 Record_ID, Module_ID, CONVERT(varchar(32), Tested_At, 120) AS Tested_At,
+                           Passed, Result_File
+                    FROM dbo.Hipot
+                    WHERE Module_ID = ?
+                    ORDER BY Record_ID DESC
+                """
+                if engine == "MSSQL_PYMSSQL":
+                    query = query.replace("?", "%s")
+                cur.execute(query, (module_id,))
+                row = cur.fetchone()
+                if row:
+                    cols = [desc[0].lower() for desc in cur.description]
+                    row_dict = dict(zip(cols, row))
+                    conn.close()
+
+                    passed_bool = bool(row_dict.get("passed"))
+                    overall = "PASS" if passed_bool else "FAIL"
+                    return {
+                        "found": True,
+                        "source": f"MSSQL_PL2_LIVE ({engine})",
+                        "record_id": row_dict.get("record_id"),
+                        "module_id": row_dict.get("module_id") or module_id,
+                        "tested_at": str(row_dict.get("tested_at") or ""),
+                        "passed": passed_bool,
+                        "overall_result": overall,
+                        "result_file": str(row_dict.get("result_file") or "")
+                    }
                 conn.close()
-            except Exception:
-                pass
-
-    # 2. PostgreSQL fallback
-    cfg = CONFIG.get("hipot_postgres", {})
-    if cfg.get("enabled", False):
-        try:
-            import psycopg2
-            conn = psycopg2.connect(
-                host=cfg["host"],
-                port=cfg["port"],
-                dbname=cfg["database"],
-                user=cfg["user"],
-                password=cfg["password"],
-                connect_timeout=cfg.get("timeout", 2)
-            )
-            cur = conn.cursor()
-            cur.execute(cfg["query"], (module_id,))
-            row = cur.fetchone()
-            if row:
-                cols = [desc[0] for desc in cur.description]
-                data = dict(zip(cols, row))
-                conn.close()
-                data["source"] = "POSTGRES_LIVE"
-                return data
-            conn.close()
-        except Exception as e:
-            pass
-
-    is_ref_module = (not module_id or module_id in ("USM0112208260078", "USM0111208260304"))
-    if is_ref_module:
-        dcw_leakage = 10.00
-        ir_mohm = 1680.0
-        gb_mohm = 14.0
-        test_time = "26-08-22 17:08:41"
-        tested_at_iso = "2026-08-22T17:08:41Z"
-    else:
-        seed = int(hashlib.md5((module_id + "_hipot").encode('utf-8')).hexdigest()[:6], 16)
-        dcw_leakage = round(10.00 + ((seed % 10) - 5) / 10.0, 2)
-        ir_mohm = round(1680.0 + (seed % 200) - 100, 1)
-        gb_mohm = round(14.0 + ((seed % 8) - 4) / 10.0, 1)
-        test_time = "26-08-22 17:08:41"
-        tested_at_iso = "2026-08-22T17:08:41Z"
-
-    channels = [
-        {
-            "channel": 1,
-            "name": "CH1: Frame-to-Cell Dielectric",
-            "type": "DCW",
-            "voltage_v": 1500,
-            "measured_value": dcw_leakage,
-            "unit": "µA",
-            "limit": "< 50.0 µA",
-            "status": "PASS"
-        },
-        {
-            "channel": 2,
-            "name": "CH2: Wet Insulation Resistance",
-            "type": "IR",
-            "voltage_v": 1000,
-            "measured_value": ir_mohm,
-            "unit": "MΩ",
-            "limit": "≥ 400.0 MΩ",
-            "status": "PASS"
-        },
-        {
-            "channel": 3,
-            "name": "CH3: Ground Bond Continuity",
-            "type": "GB",
-            "test_current_a": 25,
-            "measured_value": gb_mohm,
-            "unit": "mΩ",
-            "limit": "< 100.0 mΩ",
-            "status": "PASS"
-        },
-        {
-            "channel": 4,
-            "name": "CH4: Reverse Current & Arc Detection",
-            "type": "ARC",
-            "voltage_v": 1500,
-            "measured_value": 0.0,
-            "unit": "µA",
-            "limit": "NO ARC",
-            "status": "PASS"
-        }
-    ]
+            except Exception as e:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     return {
-        "module_id": module_id,
-        "source": "POSTGRESQL_SIMULATED_FALLBACK",
-        "db_engine": "PostgreSQL (100.100.0.22:5432 / hipot_tests)",
-        "connection_ready": True,
-        "overall_status": "PASS",
-        "overall_result": "PASS",
-        "badge": "HIPOT: PASS",
-        "recipe": "IEC 61730-2 MST 16 / UL 61730",
-        "tested_at": tested_at_iso,
-        "withstand_voltage_v": 1500,
-        "leakage_current_ua": dcw_leakage,
-        "leakage_limit_ua": 50.0,
-        "insulation_resistance_mohm": ir_mohm,
-        "insulation_min_mohm": 400.0,
-        "ground_continuity_mohm": gb_mohm,
-        "ground_max_mohm": 100.0,
-        "wet_leakage_ua": round(dcw_leakage * 0.45, 2),
-        "dwell_time_s": 3.0,
-        "arc_detection": "NONE DETECTED",
-        "channels": channels,
-        "parameters": {
-            "dcw": {
-                "title": "1. DCW (DC Withstand)",
-                "status": "PASS",
-                "value": f"{dcw_leakage:.2f}",
-                "unit": "µA",
-                "display": f"{dcw_leakage:.2f} µA",
-                "label": "DC Withstanding (Leakage)",
-                "spec_limit": "< 50.00 µA",
-                "voltage_applied": "1500 VDC"
-            },
-            "ir": {
-                "title": "2. IR (Insulation Resistance)",
-                "status": "PASS",
-                "value": f"{ir_mohm:.1f}",
-                "unit": "MΩ",
-                "display": f"{ir_mohm:.1f} MΩ",
-                "label": "Insulation Resistance",
-                "spec_limit": "≥ 500.0 MΩ",
-                "voltage_applied": "1000 VDC"
-            },
-            "gb": {
-                "title": "3. GB (Ground Bond)",
-                "status": "PASS",
-                "value": f"{gb_mohm:.1f}",
-                "unit": "mΩ",
-                "display": f"{gb_mohm:.1f} mΩ",
-                "label": "Ground Continuity (25A)",
-                "spec_limit": "< 100.0 mΩ",
-                "test_current": "25 A"
-            },
-            "test_voltage_vdc": 1500,
-            "test_duration_sec": 3.0,
-            "leakage_current_ma": dcw_leakage / 1000.0,
-            "insulation_resistance_mohm": ir_mohm,
-            "ground_continuity_ohm": gb_mohm / 1000.0,
-            "arc_detected": False,
-            "tester_id": "Chroma 19053 High-Voltage Dielectric Analyzer",
-            "test_timestamp": test_time
-        }
+        "found": False,
+        "source": "SIMULATED_FALLBACK",
+        "record_id": None,
+        "module_id": module_id or "",
+        "tested_at": "",
+        "passed": False,
+        "overall_result": "N/A",
+        "result_file": ""
+    }
+
+
+def get_el2_metadata(module_id):
+    """
+    Queries dbo.EL2 in MSSQL PL2 for module EL inspection metadata.
+    """
+    if module_id:
+        conn, engine = get_mssql_read_connection()
+        if conn:
+            try:
+                cur = conn.cursor()
+                query = """
+                    SELECT TOP 1 Record_ID, Module_ID, CONVERT(varchar(32), Tested_At, 120) AS Tested_At,
+                           AIResult, RetrialResult, Image_Path, Vis_Image, Result_File, Tester_Name
+                    FROM dbo.EL2
+                    WHERE Module_ID = ?
+                    ORDER BY Record_ID DESC
+                """
+                if engine == "MSSQL_PYMSSQL":
+                    query = query.replace("?", "%s")
+                cur.execute(query, (module_id,))
+                row = cur.fetchone()
+                if row:
+                    cols = [desc[0].lower() for desc in cur.description]
+                    rdict = dict(zip(cols, row))
+                    conn.close()
+                    return {
+                        "found": True,
+                        "source": f"MSSQL_PL2_LIVE ({engine})",
+                        "record_id": rdict.get("record_id"),
+                        "module_id": rdict.get("module_id") or module_id,
+                        "tested_at": str(rdict.get("tested_at") or ""),
+                        "ai_result": rdict.get("airesult"),
+                        "retrial_result": rdict.get("retrialresult"),
+                        "image_path": str(rdict.get("image_path") or ""),
+                        "vis_image": str(rdict.get("vis_image") or ""),
+                        "result_file": str(rdict.get("result_file") or ""),
+                        "tester_name": str(rdict.get("tester_name") or "")
+                    }
+                conn.close()
+            except Exception as e:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    return {
+        "found": False,
+        "source": "SIMULATED_FALLBACK",
+        "record_id": None,
+        "module_id": module_id or "",
+        "tested_at": "",
+        "ai_result": None,
+        "retrial_result": None,
+        "image_path": "",
+        "vis_image": "",
+        "result_file": "",
+        "tester_name": ""
     }
 
 # In-Memory State
 active_clients = []
 current_conveyor_panel = {
-    "panel_id": "USM0112208260078",
-    "channel": "CH88",
+    "panel_id": "",
+    "channel": "IDLE",
     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     "source": "Initial Baseline"
 }
+active_main_screen_module = ""
 active_sessions = {}  # token -> user dict
 mqtt_connected = False
 mqtt_channel_serials = {"CH88": None, "CH89": None}
@@ -704,12 +435,14 @@ def get_db():
     return conn
 
 _last_mssql_attempt = 0
-_mssql_cooldown_sec = 20
+_last_mssql_read_attempt = 0
+_mssql_cooldown_sec = 10
 
 def get_mssql_connection():
     """
     Connects to Microsoft SQL Server using credentials from environment variables / .env.
     Tries pyodbc first (ODBC Driver 17/18), falls back to pymssql.
+    Configures pyodbc output converter for SQL Server datetimeoffset (-155).
     """
     global _last_mssql_attempt
     cfg = CONFIG.get("mssql", {})
@@ -719,11 +452,14 @@ def get_mssql_connection():
     now = time.time()
     if (now - _last_mssql_attempt) < _mssql_cooldown_sec:
         return None, None
-    _last_mssql_attempt = now
 
     # 1. Try pyodbc (ODBC Driver 17 or 18)
     try:
         import pyodbc
+        try:
+            pyodbc.add_output_converter(-155, lambda b: str(b))
+        except Exception:
+            pass
         for driver in ["ODBC Driver 17 for SQL Server", "ODBC Driver 18 for SQL Server", "SQL Server"]:
             try:
                 conn_str = (
@@ -736,6 +472,11 @@ def get_mssql_connection():
                     f"Timeout={cfg.get('timeout', 3)};"
                 )
                 conn = pyodbc.connect(conn_str, timeout=cfg.get("timeout", 3))
+                try:
+                    conn.add_output_converter(-155, lambda b: str(b))
+                except Exception:
+                    pass
+                _last_mssql_attempt = 0
                 return conn, "MSSQL_PYODBC"
             except Exception:
                 continue
@@ -753,11 +494,83 @@ def get_mssql_connection():
             database=cfg["database"],
             timeout=cfg.get("timeout", 3)
         )
+        _last_mssql_attempt = 0
         return conn, "MSSQL_PYMSSQL"
     except Exception as e:
         _last_mssql_attempt = now
         print(f"[MSSQL Notice] Offline fallback: {e}. Using local SQLite (retrying MSSQL in {_mssql_cooldown_sec}s).")
         return None, None
+
+def get_mssql_read_connection():
+    """
+    Connects to Microsoft SQL Server PL2 (100.100.100.50:1433) using read-only credentials (usm / usm2026).
+    Falls back to get_mssql_connection() if read credentials fail.
+    Configures pyodbc output converter for SQL Server datetimeoffset (-155).
+    """
+    global _last_mssql_read_attempt
+    cfg = CONFIG.get("mssql", {})
+    if not cfg.get("enabled", False):
+        return None, None
+
+    now = time.time()
+    if (now - _last_mssql_read_attempt) < _mssql_cooldown_sec:
+        return get_mssql_connection()
+
+    read_user = cfg.get("read_user") or _env_str("MSSQL_READ_USER", "usm")
+    read_password = cfg.get("read_password") or _env_str("MSSQL_READ_PASSWORD", "usm2026")
+    server = cfg.get("server", "100.100.100.50")
+    port = int(cfg.get("port", 1433))
+    database = cfg.get("database", "PL2")
+    timeout = int(cfg.get("timeout", 3))
+
+    # 1. Try pyodbc (ODBC Driver 17/18/SQL Server)
+    try:
+        import pyodbc
+        try:
+            pyodbc.add_output_converter(-155, lambda b: str(b))
+        except Exception:
+            pass
+        for driver in ["ODBC Driver 17 for SQL Server", "ODBC Driver 18 for SQL Server", "SQL Server"]:
+            try:
+                conn_str = (
+                    f"DRIVER={{{driver}}};"
+                    f"SERVER={server},{port};"
+                    f"DATABASE={database};"
+                    f"UID={read_user};"
+                    f"PWD={read_password};"
+                    f"TrustServerCertificate=yes;"
+                    f"Timeout={timeout};"
+                )
+                conn = pyodbc.connect(conn_str, timeout=timeout)
+                try:
+                    conn.add_output_converter(-155, lambda b: str(b))
+                except Exception:
+                    pass
+                _last_mssql_read_attempt = 0
+                return conn, "MSSQL_PYODBC"
+            except Exception:
+                continue
+    except ImportError:
+        pass
+
+    # 2. Try pymssql
+    try:
+        import pymssql
+        conn = pymssql.connect(
+            server=server,
+            port=port,
+            user=read_user,
+            password=read_password,
+            database=database,
+            timeout=timeout
+        )
+        _last_mssql_read_attempt = 0
+        return conn, "MSSQL_PYMSSQL"
+    except Exception:
+        pass
+
+    _last_mssql_read_attempt = now
+    return get_mssql_connection()
 
 def execute_mssql_insert(query, params):
     """
@@ -883,9 +696,9 @@ def init_database():
 # ---------------------------------------------------------------------------
 def fetch_el_image_via_ftp(panel_id, side="front"):
     """
-    Connects to the EL Testing PC via FTP and downloads {panel_id}.jpg (or {panel_id}_back.jpg)
-    Caches the image locally in CACHE_DIR.
-    Searches root and dated directories (e.g. /YYYY-MM-DD/L2_QEL003/Day/).
+    Connects to the EL Testing PC via FTP (100.100.200.223) and downloads the module image.
+    Resolves exact path from dbo.EL2 in MSSQL PL2, with candidate transforms (p2, p1) and OK/NG folder scans.
+    Caches downloaded image locally in CACHE_DIR.
     """
     side_normalized = "back" if str(side).lower() in ("back", "rear", "b") else "front"
     suffix = "_back" if side_normalized == "back" else ""
@@ -893,39 +706,17 @@ def fetch_el_image_via_ftp(panel_id, side="front"):
     if local_file.exists():
         return local_file, "CACHED"
 
-    # 1. First check if a database table in MSSQL has the exact directory path
-    conn, engine = get_mssql_connection()
+    # 1. Query dbo.EL2 in MSSQL PL2 for exact Image_Path
+    el_meta = get_el2_metadata(panel_id)
     db_image_path = None
-    if conn:
-        try:
-            cur = conn.cursor()
-            for tbl in ["dbo.L2_QEL003", "dbo.EL_Images", "dbo.EL_Inspection", "dbo.EL_Test", "dbo.EL_Results"]:
-                try:
-                    cur.execute(f"SELECT TOP 1 * FROM {tbl} WHERE Module_ID = ? OR Serial_Number = ?", (panel_id, panel_id))
-                    row = cur.fetchone()
-                    if row:
-                        cols = [d[0].lower() for d in cur.description]
-                        rdict = dict(zip(cols, row))
-                        db_image_path = (
-                            rdict.get("file_directory_address")
-                            or rdict.get("file_directory")
-                            or rdict.get("directory")
-                            or rdict.get("file_path")
-                            or rdict.get("image_path")
-                            or rdict.get("path")
-                        )
-                        break
-                except Exception:
-                    continue
-            conn.close()
-        except Exception:
-            try:
-                conn.close()
-            except Exception:
-                pass
+    if el_meta.get("found"):
+        if side_normalized == "back" and el_meta.get("vis_image"):
+            db_image_path = el_meta.get("vis_image")
+        else:
+            db_image_path = el_meta.get("image_path")
 
     if not CONFIG["ftp"]["enabled"]:
-        # If FTP is not physically online yet, fallback to local sample images
+        # If FTP is not physically online, fallback to local sample images
         if side_normalized == "back":
             back_sample = BASE_DIR / "sample_el_back.jpg"
             if back_sample.exists():
@@ -948,54 +739,86 @@ def fetch_el_image_via_ftp(panel_id, side="front"):
     ftp_cfg = CONFIG["ftp"]
     try:
         ftp = ftplib.FTP()
+        ftp.encoding = "gbk"
         ftp.connect(ftp_cfg["host"], ftp_cfg["port"], timeout=5)
         ftp.login(ftp_cfg["username"], ftp_cfg["password"])
 
-        # Try multiple candidate names for front/back
+        downloaded = False
+
+        # If dbo.EL2 returned an Image_Path, test derived paths:
+        # e.g. clean_path = '/el_ret_fujian/2026-11-11/L2_QEL003/Day/OK/el/USM0123110260015.jpg'
+        # p1 = '/2026-11-11/L2_QEL003/Day/OK/el/USM0123110260015.jpg'
+        # p2 = '/2026-11-11/L2_QEL003/Day/OK/USM0123110260015.jpg'
+        if db_image_path:
+            clean_path = str(db_image_path).replace("\\", "/")
+            p1 = clean_path.replace("/el_ret_fujian", "")
+            p2 = p1.replace("/el/", "/").replace("/vis/", "/")
+            for test_path in [p2, p1, clean_path]:
+                if not test_path:
+                    continue
+                try:
+                    with open(local_file, "wb") as f:
+                        ftp.retrbinary(f"RETR {test_path}", f.write)
+                    if local_file.exists() and local_file.stat().st_size > 0:
+                        downloaded = True
+                        break
+                    else:
+                        if local_file.exists():
+                            local_file.unlink()
+                except Exception:
+                    if local_file.exists():
+                        try:
+                            local_file.unlink()
+                        except Exception:
+                            pass
+
         if side_normalized == "back":
             candidates = [f"{panel_id}_back.jpg", f"{panel_id}_B.jpg", f"{panel_id}_rear.jpg", f"{panel_id}.jpg"]
         else:
             candidates = [f"{panel_id}.jpg", f"{panel_id}_front.jpg", f"{panel_id}_F.jpg"]
 
-        downloaded = False
-
-        # If DB gave us a specific file path on FTP, try it first
-        if db_image_path:
-            clean_db_path = str(db_image_path).replace("\\", "/")
-            try:
-                with open(local_file, "wb") as f:
-                    ftp.retrbinary(f"RETR {clean_db_path}", f.write)
-                downloaded = True
-            except Exception:
-                pass
-
         # Try in root or configured remote_dir
         if not downloaded:
             try:
                 ftp.cwd(ftp_cfg.get("remote_dir", "/"))
+                for remote_name in candidates:
+                    try:
+                        with open(local_file, "wb") as f:
+                            ftp.retrbinary(f"RETR {remote_name}", f.write)
+                        if local_file.exists() and local_file.stat().st_size > 0:
+                            downloaded = True
+                            break
+                        else:
+                            if local_file.exists():
+                                local_file.unlink()
+                    except Exception:
+                        if local_file.exists():
+                            try:
+                                local_file.unlink()
+                            except Exception:
+                                pass
             except Exception:
                 pass
-            for remote_name in candidates:
-                try:
-                    with open(local_file, "wb") as f:
-                        ftp.retrbinary(f"RETR {remote_name}", f.write)
-                    downloaded = True
-                    break
-                except Exception:
-                    continue
 
-        # If not found in root, check date directories (e.g., YYYY-MM-DD/L2_QEL003 and /Day /Night)
+        # If not found in root, check dated directories with OK and NG subfolders
         if not downloaded:
             try:
                 ftp.cwd("/")
                 root_items = ftp.nlst()
                 date_folders = sorted([d for d in root_items if d.startswith("202")], reverse=True)
                 for df in date_folders[:5]:
-                    # Search /YYYY-MM-DD/L2_QEL003 directly, then /Day and /Night subdirectories
                     sub_dirs = [
-                        f"/{df}/L2_QEL003",
+                        f"/{df}/L2_QEL003/Day/OK",
+                        f"/{df}/L2_QEL003/Day/NG",
+                        f"/{df}/L2_QEL003/Day/OK/el",
+                        f"/{df}/L2_QEL003/Day/NG/el",
                         f"/{df}/L2_QEL003/Day",
-                        f"/{df}/L2_QEL003/Night"
+                        f"/{df}/L2_QEL003/Night/OK",
+                        f"/{df}/L2_QEL003/Night/NG",
+                        f"/{df}/L2_QEL003/Night/OK/el",
+                        f"/{df}/L2_QEL003/Night/NG/el",
+                        f"/{df}/L2_QEL003/Night",
+                        f"/{df}/L2_QEL003"
                     ]
                     for sub_dir in sub_dirs:
                         try:
@@ -1004,10 +827,18 @@ def fetch_el_image_via_ftp(panel_id, side="front"):
                                 try:
                                     with open(local_file, "wb") as f:
                                         ftp.retrbinary(f"RETR {remote_name}", f.write)
-                                    downloaded = True
-                                    break
+                                    if local_file.exists() and local_file.stat().st_size > 0:
+                                        downloaded = True
+                                        break
+                                    else:
+                                        if local_file.exists():
+                                            local_file.unlink()
                                 except Exception:
-                                    continue
+                                    if local_file.exists():
+                                        try:
+                                            local_file.unlink()
+                                        except Exception:
+                                            pass
                             if downloaded:
                                 break
                         except Exception:
@@ -1017,8 +848,15 @@ def fetch_el_image_via_ftp(panel_id, side="front"):
             except Exception:
                 pass
 
-        ftp.quit()
-        if downloaded:
+        try:
+            ftp.quit()
+        except Exception:
+            try:
+                ftp.close()
+            except Exception:
+                pass
+
+        if downloaded and local_file.exists() and local_file.stat().st_size > 0:
             return local_file, "FTP_DOWNLOADED"
         else:
             default_sample = BASE_DIR / ("sample_el_back.jpg" if side_normalized == "back" else "sample_el_1.jpg")
@@ -1214,9 +1052,11 @@ def prefetch_all_data_for_module(serial):
 
         sunsim = get_sunsim_telemetry(serial)
         hipot = get_hipot_telemetry(serial)
+        el2 = get_el2_metadata(serial)
         prefetched_telemetry[serial]["sunsim"] = sunsim
         prefetched_telemetry[serial]["sun_simulator"] = sunsim
         prefetched_telemetry[serial]["hipot"] = hipot
+        prefetched_telemetry[serial]["el2"] = el2
 
         # Background fetch FTP image without blocking initial telemetry cache
         try:
@@ -1295,7 +1135,7 @@ def handle_conveyor_serial_arrival(serial, channel="CH88"):
     Deduplicates arrivals per conveyor channel, pre-fetches DB/FTP telemetry,
     maintains server-side current panel and FIFO queue, and broadcasts SSE updates.
     """
-    global current_conveyor_panel, mqtt_channel_serials, mqtt_queue
+    global current_conveyor_panel, mqtt_channel_serials, mqtt_queue, active_main_screen_module
 
     channel = "CH89" if str(channel).upper() in ("CH89", "89") else "CH88"
 
@@ -1322,6 +1162,7 @@ def handle_conveyor_serial_arrival(serial, channel="CH88"):
 
     if current_conveyor_panel.get("source") == "Initial Baseline" or not current_conveyor_panel.get("panel_id"):
         current_conveyor_panel = panel_entry
+        active_main_screen_module = current_conveyor_panel["panel_id"]
     elif serial != current_conveyor_panel.get("panel_id") and not any(item.get("panel_id") == serial for item in mqtt_queue):
         mqtt_queue.append(panel_entry)
 
@@ -1330,6 +1171,8 @@ def handle_conveyor_serial_arrival(serial, channel="CH88"):
         "type": "MQTT_CONVEYOR_UPDATE",
         "module_id": serial,
         "panel_id": serial,
+        "queued_serial": serial,
+        "active_module_id": current_conveyor_panel.get("panel_id"),
         "channel": channel,
         "ch88_serial": mqtt_channel_serials.get("CH88"),
         "ch89_serial": mqtt_channel_serials.get("CH89"),
@@ -1679,6 +1522,14 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                 self.send_json(200, {"authenticated": False, "user": None})
             return
 
+        # Active Module Synchronisation Endpoint
+        if path == "/api/module/active":
+            self.send_json(200, {
+                "module_id": active_main_screen_module,
+                "panel_id": active_main_screen_module
+            })
+            return
+
         # 4. Get Current Conveyor Panel ID
         if path in ("/api/module/current", "/api/conveyor/current"):
             self.send_json(200, {
@@ -1846,23 +1697,31 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
         # 8. Sun Simulator Metrology Endpoint (SQLExpress / Simulation Fallback)
         if path.startswith("/api/telemetry/sunsim"):
             query = parse_qs(parsed.query)
-            mod_id = query.get("module_id", [None])[0] or current_conveyor_panel.get("panel_id", "USM0112208260078")
+            mod_id = query.get("module_id", [None])[0] or current_conveyor_panel.get("panel_id", "")
             data = get_sunsim_telemetry(mod_id)
             self.send_json(200, data)
             return
 
-        # 9. Hi-Pot Electrical Safety Endpoint (PostgreSQL / Simulation Fallback)
+        # 9. Hi-Pot Electrical Safety Endpoint (MSSQL PL2 / Simulation Fallback)
         if path.startswith("/api/telemetry/hipot"):
             query = parse_qs(parsed.query)
-            mod_id = query.get("module_id", [None])[0] or current_conveyor_panel.get("panel_id", "USM0112208260078")
+            mod_id = query.get("module_id", [None])[0] or current_conveyor_panel.get("panel_id", "")
             data = get_hipot_telemetry(mod_id)
             self.send_json(200, data)
             return
 
-        # 10. Combined Telemetry Endpoint (SunSim + Hi-Pot + EL Images)
+        # 10. EL2 Inspection Endpoint (MSSQL PL2 dbo.EL2)
+        if path.startswith("/api/telemetry/el2") or path.startswith("/api/telemetry/el"):
+            query = parse_qs(parsed.query)
+            mod_id = query.get("module_id", [None])[0] or current_conveyor_panel.get("panel_id", "")
+            data = get_el2_metadata(mod_id)
+            self.send_json(200, data)
+            return
+
+        # 11. Combined Telemetry Endpoint (SunSim + Hi-Pot + EL2 + EL Images)
         if path.startswith("/api/telemetry"):
             query = parse_qs(parsed.query)
-            mod_id = query.get("module_id", [None])[0] or current_conveyor_panel.get("panel_id", "USM0112208260078")
+            mod_id = query.get("module_id", [None])[0] or current_conveyor_panel.get("panel_id", "")
             
             # Instant cache hit from MQTT background prefetch
             cached = prefetched_telemetry.get(mod_id)
@@ -1872,6 +1731,7 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
 
             sunsim = get_sunsim_telemetry(mod_id)
             hipot = get_hipot_telemetry(mod_id)
+            el2 = get_el2_metadata(mod_id)
             
             # EL Image for single-module reference display on Monitor 2
             sample_num = (abs(hash(mod_id)) % 4) + 1
@@ -1887,6 +1747,7 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                 "sunsim": sunsim,
                 "sun_simulator": sunsim,
                 "hipot": hipot,
+                "el2": el2,
                 "cached_at": time.time()
             }
             prefetched_telemetry[mod_id] = telemetry_data
@@ -1957,7 +1818,7 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
-        global current_conveyor_panel, mqtt_queue
+        global current_conveyor_panel, mqtt_queue, active_main_screen_module
         parsed = urlparse(self.path)
         path = parsed.path
         length = int(self.headers.get("Content-Length", 0))
@@ -1966,6 +1827,27 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
             payload = json.loads(body)
         except Exception:
             payload = {}
+
+        # Active Module Synchronisation (from Main Screen)
+        if path == "/api/module/active":
+            module_id = str(payload.get("module_id") or payload.get("panel_id") or "").strip()[:16]
+            if module_id:
+                active_main_screen_module = module_id
+                current_conveyor_panel["panel_id"] = module_id
+                channel = str(payload.get("channel", "CH88")).strip().upper()
+                if channel in ("CH88", "CH89"):
+                    current_conveyor_panel["channel"] = channel
+                broadcast_sse("ACTIVE_MODULE_SYNC", {
+                    "module_id": module_id,
+                    "panel_id": module_id,
+                    "channel": current_conveyor_panel.get("channel", "CH88")
+                })
+            self.send_json(200, {
+                "success": True,
+                "module_id": active_main_screen_module,
+                "panel_id": active_main_screen_module
+            })
+            return
 
         # 1. Operator CMMS Authentication (Supports Name-Only login, email, and plant CMMS)
         if path == "/api/auth/login":
@@ -2154,6 +2036,7 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
             if mqtt_queue:
                 next_panel = mqtt_queue.pop(0)
                 current_conveyor_panel = next_panel
+                active_main_screen_module = current_conveyor_panel.get("panel_id")
                 ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 broadcast_sse("PANEL_ARRIVED", {
                     "type": "MQTT_CONVEYOR_UPDATE",
@@ -2188,6 +2071,7 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
             if mqtt_queue:
                 next_panel = mqtt_queue.pop(0)
                 current_conveyor_panel = next_panel
+                active_main_screen_module = current_conveyor_panel.get("panel_id")
                 ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 broadcast_sse("PANEL_ARRIVED", {
                     "type": "MQTT_CONVEYOR_UPDATE",

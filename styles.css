@@ -106,15 +106,17 @@ body.theme-industrial {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 16px;
-  gap: 14px;
+  padding: 6px 12px;
+  gap: 8px;
+  flex-wrap: nowrap;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
 }
 
 .header-segment {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 /* Status Pills */
@@ -217,7 +219,7 @@ body.theme-industrial {
 .module-scanner {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .scanner-field {
@@ -226,8 +228,8 @@ body.theme-industrial {
   background: #080d17;
   border: 1px solid var(--border-medium);
   border-radius: 5px;
-  padding: 3px 10px;
-  gap: 8px;
+  padding: 3px 8px;
+  gap: 6px;
   transition: border-color var(--transition-fast);
 }
 
@@ -251,7 +253,7 @@ body.theme-industrial {
   font-family: var(--font-mono);
   font-size: 13px;
   font-weight: 600;
-  width: 175px;
+  width: 145px;
   letter-spacing: 0.5px;
 }
 
@@ -263,15 +265,15 @@ body.theme-industrial {
 .operator-profile-btn {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   background: #0f1a2e;
   border: 1px solid var(--border-subtle);
   border-radius: 5px;
-  padding: 5px 10px;
+  padding: 4px 8px;
   color: var(--text-main);
   cursor: pointer;
   font-family: var(--font-heading);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   transition: all var(--transition-fast);
 }
@@ -305,16 +307,16 @@ body.theme-industrial {
 .grade-toggle {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 4px;
-  padding: 6px 12px;
+  padding: 6px 10px;
   color: var(--text-muted);
   cursor: pointer;
   font-family: var(--font-heading);
   font-weight: 700;
-  font-size: 13px;
+  font-size: 12px;
   transition: all var(--transition-fast);
   user-select: none;
 }
@@ -377,16 +379,17 @@ body.theme-industrial {
 .console-btn {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 16px;
+  gap: 6px;
+  padding: 6px 12px;
   border-radius: 5px;
   font-family: var(--font-heading);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.5px;
   cursor: pointer;
   border: 1px solid transparent;
   transition: all var(--transition-fast);
+  white-space: nowrap;
 }
 
 .console-btn.primary {

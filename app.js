@@ -155,7 +155,8 @@ const state = {
   authToken: null,
   isServerOnline: false,
   isMqttConnected: false,
-  activeChannel: '', // 'CH88' | 'CH89' | 'MANUAL'
+  activeChannel: 'IDLE', // 'CH88' | 'CH89' | 'MANUAL' | 'IDLE'
+  isManualScan: false, // true when loaded via manual barcode scan or manual typing
   moduleReadyForImmediateLoad: true, // true when waiting for next module
   mqttQueue: [], // array of { panel_id, channel, timestamp }
   lastSeenChannelSerial: { CH88: null, CH89: null },
@@ -347,10 +348,19 @@ function broadcastModuleChange(modId) {
     try {
       stationSyncChannel.postMessage({
         type: 'MODULE_CHANGED',
-        moduleId: modId
+        moduleId: modId,
+        timestamp: Date.now()
       });
     } catch (e) { }
   }
+
+  try {
+    fetch(`${config.apiBaseUrl}/api/module/active`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ module_id: modId, channel: state.activeChannel || 'MANUAL' })
+    }).catch(() => {});
+  } catch (e) { }
 }
 
 // Memory mapping of grid cells and slots
@@ -381,6 +391,7 @@ function initApp() {
   }
 
   // Clear defects and reset grade
+  state.defects.clear();
   resetGrade();
   recomputeAllowedGrades();
   updateSummaryAndHistory();
@@ -391,12 +402,19 @@ function initApp() {
   const urlModule = urlParams.get('module') || urlParams.get('serial') || urlParams.get('sn') || urlParams.get('id');
   if (urlModule) {
     const cleanMod = urlModule.trim().toUpperCase().slice(0, 16);
-    loadModule(cleanMod, 'URL');
+    loadModule(cleanMod, 'URL', false);
     state.moduleReadyForImmediateLoad = false;
   } else {
-    // Default initial baseline module
-    loadModule('USM0112208260078', 'BASELINE');
+    // Start clean without fake baseline module
+    state.moduleId = '';
+    state.activeChannel = 'IDLE';
+    state.isManualScan = false;
     state.moduleReadyForImmediateLoad = true;
+    if (dom.moduleIdInput) dom.moduleIdInput.value = '';
+    if (dom.summaryModuleId) dom.summaryModuleId.textContent = 'Scan Barcode or Waiting for MQTT...';
+    if (state.currentOperator && dom.moduleIdInput) {
+      setTimeout(() => { dom.moduleIdInput.focus(); }, 100);
+    }
   }
   updateQueueDisplay();
 
@@ -1185,8 +1203,13 @@ function submitGrade() {
     return;
   }
 
-  // Open verification popup before sending to database
-  openSerialVerifyModal();
+  // If manually scanned, skip verification popup and submit immediately
+  if (state.isManualScan) {
+    executeInspectionSubmission();
+  } else {
+    // Conveyor MQTT arrival: open verification popup before sending to database
+    openSerialVerifyModal();
+  }
 }
 
 /**
@@ -1230,12 +1253,17 @@ function updateQueueDisplay() {
 
   if (dom.queueCountText) {
     if (count === 0) {
-      dom.queueCountText.textContent = 'QUEUE: 0';
+      dom.queueCountText.textContent = 'Q: 0';
+      if (dom.mqttQueuePill) {
+        dom.mqttQueuePill.title = `Active Conveyor Channel: ${activeChan} (Queue empty)`;
+      }
     } else {
       const nextMod = state.mqttQueue[0];
       const nextChan = nextMod.channel || 'MQTT';
-      const shortSerial = nextMod.panel_id.length > 16 ? nextMod.panel_id.slice(-6) : nextMod.panel_id;
-      dom.queueCountText.textContent = `QUEUE: ${count} NEXT (${shortSerial} • ${nextChan})`;
+      dom.queueCountText.textContent = 'Q: ' + count;
+      if (dom.mqttQueuePill) {
+        dom.mqttQueuePill.title = `Active: ${activeChan} | Queue: ${count} | Next in queue: ${nextMod.panel_id} (${nextChan})`;
+      }
     }
   }
 
@@ -1269,12 +1297,13 @@ function handleIncomingMqttSerial(serial, channel) {
   const isScreenFree = !state.moduleId || (
     state.moduleReadyForImmediateLoad === true &&
     state.defects.size === 0 &&
-    !state.grade
+    !state.grade &&
+    !state.isManualScan
   );
 
   if (isScreenFree) {
     // Immediate load onto screen
-    loadModule(cleanSerial, channel);
+    loadModule(cleanSerial, channel, false);
     state.moduleReadyForImmediateLoad = false;
     showToast(`Conveyor [${channel || 'MQTT'}]: Loaded ${cleanSerial}`, 'info');
   } else if (cleanSerial !== state.moduleId) {
@@ -1481,20 +1510,21 @@ function resetModuleAfterSubmit() {
   if (state.mqttQueue.length > 0) {
     const nextMod = state.mqttQueue.shift();
     updateQueueDisplay();
-    loadModule(nextMod.panel_id, nextMod.channel);
+    loadModule(nextMod.panel_id, nextMod.channel, false);
     state.moduleReadyForImmediateLoad = false;
     showToast(`Loaded next queued module [${nextMod.channel}]: ${nextMod.panel_id}`, 'success');
   } else {
-    // Reset scanner input and wait for next module from CH88 / CH89
+    // Reset scanner input and wait for next module from CH88 / CH89 or manual scan
     state.moduleId = '';
-    state.activeChannel = '';
+    state.activeChannel = 'IDLE';
+    state.isManualScan = false;
     state.moduleReadyForImmediateLoad = true;
     if (dom.moduleIdInput) {
       dom.moduleIdInput.value = '';
       dom.moduleIdInput.focus();
     }
     if (dom.summaryModuleId) {
-      dom.summaryModuleId.textContent = 'Waiting for Next Module (CH88/CH89)...';
+      dom.summaryModuleId.textContent = 'Scan Barcode or Waiting for MQTT...';
     }
     updateQueueDisplay();
   }
@@ -1503,12 +1533,20 @@ function resetModuleAfterSubmit() {
 /**
  * Load Module Serial & Defects
  */
-function loadModule(serial, channel = 'MANUAL') {
+function loadModule(serial, channel = 'MANUAL', loadHistoryDefects = false) {
   if (!serial) return;
   const cleanMod = serial.trim().toUpperCase().slice(0, 16);
   state.moduleId = cleanMod;
   state.activeChannel = channel || 'MANUAL';
+  state.isManualScan = (state.activeChannel === 'MANUAL' || state.activeChannel === 'SCANNER');
   state.moduleReadyForImmediateLoad = false;
+
+  // Always start newly loaded module with 0 defects & reset grade
+  state.defects.clear();
+  resetGrade();
+  recomputeAllowedGrades();
+  updateSummaryAndHistory();
+  renderDefectPins();
 
   if (dom.moduleIdInput) dom.moduleIdInput.value = cleanMod;
   if (dom.summaryModuleId) dom.summaryModuleId.textContent = cleanMod;
@@ -1518,12 +1556,14 @@ function loadModule(serial, channel = 'MANUAL') {
   // Broadcast to Screen 2
   broadcastModuleChange(cleanMod);
 
-  // Check prefetched cache or fetch defects
-  const cached = state.prefetchedCache.get(cleanMod);
-  if (cached && cached.defects) {
-    applyDefectsData(cached.defects);
-  } else {
-    fetchModuleDefects(cleanMod);
+  // Only load previous defects when explicitly requested (e.g. reviewing historical inspection)
+  if (loadHistoryDefects === true) {
+    const cached = state.prefetchedCache.get(cleanMod);
+    if (cached && cached.defects) {
+      applyDefectsData(cached.defects);
+    } else {
+      fetchModuleDefects(cleanMod);
+    }
   }
 }
 
@@ -1642,7 +1682,7 @@ function renderGradingHistory(records) {
 
     // Click row: loads that module's serial and defects
     tr.addEventListener('click', () => {
-      loadModule(serial);
+      loadModule(serial, 'HISTORY', true);
       showToast(`Loaded module ${serial} from history`, 'info');
       soundFx.beep(700, 0.05);
     });
@@ -1659,26 +1699,44 @@ function renderGradingHistory(records) {
 function attachEventListeners() {
   // Barcode Scanner Input
   if (dom.moduleIdInput) {
+    const handleScannerInput = () => {
+      const val = dom.moduleIdInput.value.trim().toUpperCase().slice(0, 16);
+      if (val.length === 16 && val.startsWith('USM')) {
+        if (val !== state.moduleId || !state.isManualScan) {
+          loadModule(val, 'MANUAL', false);
+          dom.moduleIdInput.blur();
+          showToast(`Manually scanned module: ${val}`, 'success');
+          soundFx.beep(800, 0.06);
+        }
+      } else if (val.length < 16) {
+        state.moduleId = val;
+        state.isManualScan = true;
+        state.activeChannel = 'MANUAL';
+        state.moduleReadyForImmediateLoad = (val.length === 0);
+        if (dom.summaryModuleId) {
+          dom.summaryModuleId.textContent = val || 'Scan Barcode or Waiting for MQTT...';
+        }
+        updateQueueDisplay();
+        broadcastModuleChange(val);
+      }
+    };
+
+    dom.moduleIdInput.addEventListener('input', handleScannerInput);
+    dom.moduleIdInput.addEventListener('paste', () => {
+      setTimeout(handleScannerInput, 10);
+    });
+
     dom.moduleIdInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
         const val = dom.moduleIdInput.value.trim().toUpperCase().slice(0, 16);
         if (val) {
-          loadModule(val, 'MANUAL');
-          showToast(`Module ${val} scanned`, 'success');
+          loadModule(val, 'MANUAL', false);
+          dom.moduleIdInput.blur();
+          showToast(`Manually scanned module: ${val}`, 'success');
           soundFx.beep(800, 0.06);
         }
       }
-    });
-
-    dom.moduleIdInput.addEventListener('input', () => {
-      const val = dom.moduleIdInput.value.trim().toUpperCase().slice(0, 16);
-      state.moduleId = val;
-      state.activeChannel = 'MANUAL';
-      state.moduleReadyForImmediateLoad = false;
-      if (dom.summaryModuleId) dom.summaryModuleId.textContent = val || 'Pending Serial';
-      updateQueueDisplay();
-      broadcastModuleChange(val);
     });
   }
 
@@ -1825,6 +1883,7 @@ function attachEventListeners() {
   if (dom.btnCloseLoginModal) {
     dom.btnCloseLoginModal.addEventListener('click', () => {
       if (dom.loginModal) dom.loginModal.classList.remove('open');
+      setTimeout(() => { if (dom.moduleIdInput) dom.moduleIdInput.focus(); }, 80);
     });
   }
 
@@ -1908,6 +1967,18 @@ function attachEventListeners() {
       return;
     }
 
+    // If not focused in any input and 'U' or 'u' is pressed while not in modal/bubble,
+    // redirect focus to moduleIdInput for physical barcode scanner key-wedge input
+    if ((e.key === 'u' || e.key === 'U') && dom.moduleIdInput && document.activeElement !== dom.moduleIdInput) {
+      const verifyModalOpen = dom.serialVerifyModal && dom.serialVerifyModal.classList.contains('open');
+      const loginModalOpen = dom.loginModal && dom.loginModal.classList.contains('open');
+      const simModalOpen = dom.simulatorModal && dom.simulatorModal.classList.contains('open');
+      const bubbleOpen = dom.cellComicBubble && dom.cellComicBubble.style.display !== 'none';
+      if (!verifyModalOpen && !loginModalOpen && !simModalOpen && !bubbleOpen) {
+        dom.moduleIdInput.focus();
+      }
+    }
+
     // Do not trigger hotkeys if typing in an input
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
       return;
@@ -1918,6 +1989,32 @@ function attachEventListeners() {
       setGrade(key);
     } else if (e.key === 'Enter') {
       submitGrade();
+    }
+  });
+
+  // Global Paste & Rapid Barcode Catcher
+  window.addEventListener('paste', (e) => {
+    const verifyModalOpen = dom.serialVerifyModal && dom.serialVerifyModal.classList.contains('open');
+    const loginModalOpen = dom.loginModal && dom.loginModal.classList.contains('open');
+    const simModalOpen = dom.simulatorModal && dom.simulatorModal.classList.contains('open');
+    const activeEl = document.activeElement;
+    const isNotesFocused = activeEl && (activeEl.id === 'bubble-notes-input' || activeEl.id === 'bubble-search-input');
+
+    if (verifyModalOpen || loginModalOpen || simModalOpen || isNotesFocused) {
+      return;
+    }
+
+    const pastedText = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+    const clean = pastedText.trim().toUpperCase().slice(0, 16);
+    if (clean.length === 16 && clean.startsWith('USM')) {
+      e.preventDefault();
+      if (dom.moduleIdInput) {
+        dom.moduleIdInput.value = clean;
+        dom.moduleIdInput.blur();
+      }
+      loadModule(clean, 'MANUAL', false);
+      showToast(`Manually scanned module: ${clean}`, 'success');
+      soundFx.beep(800, 0.06);
     }
   });
 
@@ -1968,6 +2065,7 @@ function loginCMMS(name) {
   } catch (e) { }
   updateOperatorDisplay();
   if (dom.loginModal) dom.loginModal.classList.remove('open');
+  setTimeout(() => { if (dom.moduleIdInput) dom.moduleIdInput.focus(); }, 80);
   showToast(`Welcome, ${name}`, 'success');
   soundFx.beep(850, 0.08);
 }
