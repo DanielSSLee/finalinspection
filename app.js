@@ -158,6 +158,7 @@ const state = {
   activeChannel: 'CH88', // 'CH88' | 'MANUAL'
   isManualScan: false, // true when loaded via manual barcode scan or manual typing
   isSerialVerified: false, // true when manual scan OR physical barcode verified against auto-fetched serial
+  verifyModalMode: 'ARRIVAL', // 'ARRIVAL' | 'SUBMIT'
   isSubmittingVerify: false, // guard against double-trigger from scanner Enter + input events
   isRequestInFlight: false, // guard against concurrent POST /api/inspections calls
   moduleReadyForImmediateLoad: true, // true when waiting for next module
@@ -303,9 +304,6 @@ const dom = {
   // Serial Verification Modal
   serialVerifyModal: document.getElementById('serial-verify-modal'),
   verifyModalSerial: document.getElementById('verify-modal-serial'),
-  verifyModalChannel: document.getElementById('verify-modal-channel'),
-  verifyModalGrade: document.getElementById('verify-modal-grade'),
-  verifyModalDefects: document.getElementById('verify-modal-defects'),
   verifyBarcodeInput: document.getElementById('verify-barcode-input'),
   verifyScanStatus: document.getElementById('verify-scan-status'),
   btnVerifySwitchScanned: document.getElementById('btn-verify-switch-scanned'),
@@ -1213,7 +1211,7 @@ function submitGrade() {
     executeInspectionSubmission();
   } else {
     // Conveyor MQTT / auto-fetched arrival: open verification popup before sending to database
-    openSerialVerifyModal();
+    openSerialVerifyModal('SUBMIT');
   }
 }
 
@@ -1289,52 +1287,31 @@ function handleIncomingMqttSerial(serial, channel) {
 /**
  * Open Serial Number Verification Modal
  */
-function openSerialVerifyModal() {
+function openSerialVerifyModal(mode = 'ARRIVAL') {
+  state.verifyModalMode = mode || 'ARRIVAL';
+  state.isSubmittingVerify = false;
+
   if (!dom.serialVerifyModal) {
-    executeInspectionSubmission();
+    if (state.verifyModalMode === 'SUBMIT') {
+      executeInspectionSubmission();
+    } else {
+      state.isSerialVerified = true;
+    }
     return;
   }
 
   if (dom.verifyModalSerial) {
-    dom.verifyModalSerial.textContent = state.moduleId;
-  }
-
-  if (dom.verifyModalChannel) {
-    let chanLabel = 'MANUAL';
-    if (state.activeChannel) {
-      chanLabel = state.activeChannel.startsWith('CH') ? `MQTT ${state.activeChannel}` : state.activeChannel;
-    }
-    dom.verifyModalChannel.textContent = chanLabel;
-  }
-
-  if (dom.verifyModalGrade) {
-    const gradeMap = { A: 'PRIME', B: 'SECONDARY', R: 'RETEST/REWORK', X: 'REJECT' };
-    const label = gradeMap[state.grade] || '';
-    dom.verifyModalGrade.textContent = `[${state.grade}] ${label}`;
-    dom.verifyModalGrade.className = `verify-grade-display gh-grade-${state.grade.toLowerCase()}`;
-  }
-
-  if (dom.verifyModalDefects) {
-    const count = state.defects.size;
-    if (count === 0) {
-      dom.verifyModalDefects.textContent = '0 defects (Clean module)';
-      dom.verifyModalDefects.style.color = '#34d399';
-    } else {
-      const defectCodes = Array.from(state.defects.values()).map(d => `${d.coord}:${d.defectCode}`).slice(0, 5).join(', ');
-      const more = count > 5 ? ` +${count - 5} more` : '';
-      dom.verifyModalDefects.textContent = `${count} defect(s) [${defectCodes}${more}]`;
-      dom.verifyModalDefects.style.color = '#fbbf24';
-    }
+    dom.verifyModalSerial.textContent = state.moduleId || '--';
   }
 
   // Reset physical barcode scanner verification state
-  state.isSubmittingVerify = false;
   if (dom.verifyBarcodeInput) {
     dom.verifyBarcodeInput.value = '';
   }
   if (dom.verifyScanStatus) {
     dom.verifyScanStatus.className = 'verify-scan-status';
-    dom.verifyScanStatus.textContent = "Waiting for physical barcode scan, or click 'Yes — Serial Matches' below.";
+    dom.verifyScanStatus.textContent = '';
+    dom.verifyScanStatus.style.display = 'none';
   }
   if (dom.btnVerifySwitchScanned) {
     dom.btnVerifySwitchScanned.style.display = 'none';
@@ -1352,6 +1329,20 @@ function openSerialVerifyModal() {
   }, 60);
 
   soundFx.beep(820, 0.05);
+}
+
+/**
+ * Confirm Serial Number Verification
+ */
+function confirmSerialVerification() {
+  state.isSerialVerified = true;
+  const mode = state.verifyModalMode;
+  closeSerialVerifyModal(false);
+  if (mode === 'SUBMIT') {
+    executeInspectionSubmission();
+  } else {
+    showToast(`Serial verified: ${state.moduleId}`, 'success');
+  }
 }
 
 /**
@@ -1378,16 +1369,17 @@ function handleBarcodeVerification(isEnterKey = false) {
   const scanned = dom.verifyBarcodeInput.value.trim().toUpperCase();
   const expected = (state.moduleId || '').trim().toUpperCase();
 
-  // If input is empty and Enter was pressed, acts as clicking "Yes — Serial Matches"
+  // If input is empty and Enter was pressed, acts as clicking "Yes, Matches"
   if (isEnterKey && !scanned) {
-    executeInspectionSubmission();
+    confirmSerialVerification();
     return;
   }
 
   if (!scanned) {
     if (dom.verifyScanStatus) {
       dom.verifyScanStatus.className = 'verify-scan-status';
-      dom.verifyScanStatus.textContent = "Waiting for physical barcode scan, or click 'Yes — Serial Matches' below.";
+      dom.verifyScanStatus.textContent = '';
+      dom.verifyScanStatus.style.display = 'none';
     }
     if (dom.btnVerifySwitchScanned) dom.btnVerifySwitchScanned.style.display = 'none';
     return;
@@ -1399,33 +1391,39 @@ function handleBarcodeVerification(isEnterKey = false) {
     state.isSubmittingVerify = true;
     state.isSerialVerified = true;
     if (dom.verifyScanStatus) {
+      dom.verifyScanStatus.style.display = 'block';
       dom.verifyScanStatus.className = 'verify-scan-status match';
-      dom.verifyScanStatus.textContent = `✓ PHYSICAL BARCODE MATCHED (${scanned}) — SUBMITTING GRADE...`;
+      dom.verifyScanStatus.textContent = '✓ Barcode matched';
     }
     if (dom.btnVerifySwitchScanned) dom.btnVerifySwitchScanned.style.display = 'none';
     soundFx.beep(950, 0.12);
     setTimeout(() => {
-      executeInspectionSubmission();
-    }, 160);
+      confirmSerialVerification();
+    }, 120);
     return;
   }
 
   // Case B: Mismatch
   if (scanned.length >= 16 || isEnterKey) {
     if (dom.verifyScanStatus) {
+      dom.verifyScanStatus.style.display = 'block';
       dom.verifyScanStatus.className = 'verify-scan-status mismatch';
-      dom.verifyScanStatus.textContent = `⚠ SERIAL MISMATCH! Scanned barcode [${scanned}] does NOT match active MQTT serial [${expected}].`;
+      dom.verifyScanStatus.textContent = `Mismatch: scanned ${scanned}`;
     }
     soundFx.beep(250, 0.18, 'sawtooth');
     dom.verifyBarcodeInput.select();
 
     if (dom.btnVerifySwitchScanned) {
       dom.btnVerifySwitchScanned.style.display = 'inline-block';
-      dom.btnVerifySwitchScanned.textContent = `Switch Active Module to Scanned Serial (${scanned})`;
+      dom.btnVerifySwitchScanned.textContent = `Use ${scanned}`;
       dom.btnVerifySwitchScanned.onclick = () => {
+        const wasSubmit = state.verifyModalMode === 'SUBMIT';
         closeSerialVerifyModal(false);
         loadModule(scanned, 'SCANNER');
         showToast(`Switched active module to scanned serial: ${scanned}`, 'info');
+        if (wasSubmit && state.grade) {
+          executeInspectionSubmission();
+        }
       };
     }
   }
@@ -1539,6 +1537,14 @@ function loadModule(serial, channel = 'MANUAL', loadHistoryDefects = false) {
       applyDefectsData(cached.defects);
     } else {
       fetchModuleDefects(cleanMod);
+    }
+  }
+
+  // Trigger serial verification immediately when auto-populated via MQTT
+  if (!state.isManualScan && (state.activeChannel === 'CH88' || state.activeChannel === 'MQTT')) {
+    const loginOpen = dom.loginModal && dom.loginModal.classList.contains('open');
+    if (!loginOpen) {
+      openSerialVerifyModal('ARRIVAL');
     }
   }
 }
@@ -1860,7 +1866,11 @@ function attachEventListeners() {
   if (dom.btnCloseLoginModal) {
     dom.btnCloseLoginModal.addEventListener('click', () => {
       if (dom.loginModal) dom.loginModal.classList.remove('open');
-      setTimeout(() => { if (dom.moduleIdInput) dom.moduleIdInput.focus(); }, 80);
+      if (state.moduleId && !state.isManualScan && !state.isSerialVerified) {
+        openSerialVerifyModal('ARRIVAL');
+      } else {
+        setTimeout(() => { if (dom.moduleIdInput) dom.moduleIdInput.focus(); }, 80);
+      }
     });
   }
 
@@ -1881,7 +1891,7 @@ function attachEventListeners() {
   // Serial Verification Modal Actions
   if (dom.btnVerifyConfirm) {
     dom.btnVerifyConfirm.addEventListener('click', () => {
-      executeInspectionSubmission();
+      confirmSerialVerification();
     });
   }
 
@@ -2049,7 +2059,11 @@ function loginCMMS(name) {
   } catch (e) { }
   updateOperatorDisplay();
   if (dom.loginModal) dom.loginModal.classList.remove('open');
-  setTimeout(() => { if (dom.moduleIdInput) dom.moduleIdInput.focus(); }, 80);
+  if (state.moduleId && !state.isManualScan && !state.isSerialVerified) {
+    openSerialVerifyModal('ARRIVAL');
+  } else {
+    setTimeout(() => { if (dom.moduleIdInput) dom.moduleIdInput.focus(); }, 80);
+  }
   showToast(`Welcome, ${name}`, 'success');
   soundFx.beep(850, 0.08);
 }

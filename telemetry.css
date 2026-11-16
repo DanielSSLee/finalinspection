@@ -343,6 +343,11 @@ html, body {
   margin: 0;
   overflow: hidden;
   position: relative;
+  cursor: zoom-in;
+}
+
+.el-single-viewport.is-zoomed {
+  cursor: crosshair;
 }
 
 .el-single-img {
@@ -352,7 +357,27 @@ html, body {
   display: block;
   user-select: none;
   pointer-events: none;
+  will-change: transform;
+  transform-origin: 50% 50%;
   transition: opacity 0.25s ease;
+}
+
+.el-zoom-badge {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  background: rgba(6, 182, 212, 0.12);
+  border: 1px solid var(--border-cyan);
+  border-radius: var(--radius-xs);
+  padding: 2px 8px;
+  cursor: pointer;
+  align-items: center;
+  gap: 4px;
+}
+
+.el-zoom-badge:hover {
+  background: rgba(6, 182, 212, 0.25);
 }
 
 .el-loading-overlay {

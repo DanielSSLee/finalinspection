@@ -51,12 +51,14 @@
             <h2 class="panel-title">ELECTROLUMINESCENCE (EL) INSPECTION</h2>
             <span class="el-folder-badge" id="val-el-folder-status" title="EL Image Folder Status (OK / NG)">--</span>
           </div>
-          <div class="panel-actions" id="el-panel-actions"></div>
+          <div class="panel-actions" id="el-panel-actions">
+            <button type="button" class="el-zoom-badge" id="btn-reset-el-zoom" title="Scroll on image to zoom • Click or double-click image to reset" style="display: none;">1.0x</button>
+          </div>
         </div>
 
         <div class="el-viewport-container" id="el-viewport-container">
           <!-- Single Module EL Image View - 100% edge-to-edge -->
-          <div class="el-single-viewport">
+          <div class="el-single-viewport" id="el-single-viewport">
             <img src="sample_el_1.jpg" alt="Active Module EL Image" class="el-single-img" id="el-single-img" />
             <div class="el-loading-overlay" id="el-loading-overlay" style="display: none;">
               <span class="el-loading-text">Loading live EL inspection imagery...</span>

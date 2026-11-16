@@ -19,7 +19,10 @@
     sunsimData: null,
     hipotData: null,
     hoverV: null,
-    canvasMetrics: null
+    canvasMetrics: null,
+    elZoomScale: 1,
+    elZoomOriginX: 50,
+    elZoomOriginY: 50
   };
 
   // Cached DOM Elements
@@ -32,8 +35,10 @@
       elLoadingOverlay: document.getElementById('el-loading-overlay'),
 
       // EL Single View Element
+      elSingleViewport: document.getElementById('el-single-viewport') || document.querySelector('.el-single-viewport'),
       elSingleImg: document.getElementById('el-single-img'),
       elPanelActions: document.getElementById('el-panel-actions'),
+      btnResetElZoom: document.getElementById('btn-reset-el-zoom'),
       valElFolderStatus: document.getElementById('val-el-folder-status'),
 
       // SunSim Elements (dbo.IV_Flasher)
@@ -67,6 +72,7 @@
       return;
     }
     state.loadedElModuleId = moduleId || '';
+    resetElZoom();
 
     // Ensure the <img> tag is always visible
     dom.elSingleImg.style.display = 'block';
@@ -116,6 +122,91 @@
       : (`/api/module/${encodeURIComponent(moduleId)}/el-image?side=front${bustParam}`);
 
     dom.elSingleImg.src = targetSrc;
+  }
+
+  // Hover-centered scroll-wheel zoom controller for EL image inspection
+  function applyElZoom() {
+    if (!dom.elSingleImg) return;
+    dom.elSingleImg.style.transformOrigin = `${state.elZoomOriginX}% ${state.elZoomOriginY}%`;
+    dom.elSingleImg.style.transform = state.elZoomScale > 1 ? `scale(${state.elZoomScale})` : 'scale(1)';
+
+    if (dom.elSingleViewport) {
+      dom.elSingleViewport.classList.toggle('is-zoomed', state.elZoomScale > 1);
+    }
+
+    if (dom.btnResetElZoom) {
+      if (state.elZoomScale > 1) {
+        const label = state.elZoomScale.toFixed(2).replace(/\.00$/, '.0').replace(/(\.\d)0$/, '$1');
+        dom.btnResetElZoom.textContent = `${label}x Reset`;
+        dom.btnResetElZoom.style.display = 'inline-flex';
+      } else {
+        dom.btnResetElZoom.style.display = 'none';
+      }
+    }
+  }
+
+  function resetElZoom() {
+    state.elZoomScale = 1;
+    state.elZoomOriginX = 50;
+    state.elZoomOriginY = 50;
+    applyElZoom();
+  }
+
+  function setElZoomOriginFromEvent(e) {
+    if (!dom.elSingleViewport) return;
+    const rect = dom.elSingleViewport.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const u = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const v = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+    const overscan = 18; // % buffer past 0%..100% so edges pull inward with black margin when zoomed
+    state.elZoomOriginX = -overscan + u * (100 + overscan * 2);
+    state.elZoomOriginY = -overscan + v * (100 + overscan * 2);
+  }
+
+  function initElZoom() {
+    if (!dom.elSingleViewport) return;
+
+    dom.elSingleViewport.addEventListener('mousemove', (e) => {
+      setElZoomOriginFromEvent(e);
+      if (state.elZoomScale > 1) {
+        applyElZoom();
+      }
+    });
+
+    // Track fast mouse movements that overshoot the viewport edge while zoomed in
+    window.addEventListener('mousemove', (e) => {
+      if (state.elZoomScale <= 1 || !dom.elSingleViewport) return;
+      const rect = dom.elSingleViewport.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const margin = 100;
+      if (
+        e.clientX >= rect.left - margin &&
+        e.clientX <= rect.right + margin &&
+        e.clientY >= rect.top - margin &&
+        e.clientY <= rect.bottom + margin
+      ) {
+        setElZoomOriginFromEvent(e);
+        applyElZoom();
+      }
+    });
+
+    dom.elSingleViewport.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      setElZoomOriginFromEvent(e);
+      const delta = e.deltaY < 0 ? 0.25 : -0.25;
+      state.elZoomScale = Math.round(Math.max(1.0, Math.min(6.0, state.elZoomScale + delta)) * 100) / 100;
+      applyElZoom();
+    }, { passive: false });
+
+    dom.elSingleViewport.addEventListener('dblclick', () => {
+      resetElZoom();
+    });
+
+    if (dom.btnResetElZoom) {
+      dom.btnResetElZoom.addEventListener('click', () => {
+        resetElZoom();
+      });
+    }
   }
 
   // =========================================================================
@@ -764,6 +855,7 @@
   // =========================================================================
   async function init() {
     queryDom();
+    initElZoom();
     initPmaxCanvas();
     initLiveSync();
 
