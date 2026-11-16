@@ -27,6 +27,8 @@
   function queryDom() {
     dom = {
       displayModuleId: document.getElementById('display-module-id'),
+      btnRefreshTelemetry: document.getElementById('btn-refresh-telemetry'),
+      elLoadingOverlay: document.getElementById('el-loading-overlay'),
 
       // EL Single View Element
       elSingleImg: document.getElementById('el-single-img'),
@@ -56,8 +58,11 @@
   // =========================================================================
   // 1. Single Module EL Image Reference Display
   // =========================================================================
-  function updateSingleElImage(moduleId, elUrl, fallbackUrl) {
+  function updateSingleElImage(moduleId, elUrl, fallbackUrl, forceBust = false) {
     if (!dom.elSingleImg) return;
+
+    // Ensure the <img> tag is always visible
+    dom.elSingleImg.style.display = 'block';
 
     // Deterministic hash from moduleId for stable sample fallback
     let hash = 0;
@@ -70,13 +75,29 @@
     const defaultFallback = `sample_el_${sampleIdx}.jpg`;
     const finalFallback = fallbackUrl || defaultFallback;
 
-    // Attach graceful fallback handler
+    // Attach graceful fallback handler if live server/FTP image fails to load
     dom.elSingleImg.onerror = function () {
+      console.warn('[Telemetry] EL image load failed for', moduleId, 'falling back to', finalFallback);
       this.onerror = null;
       this.src = finalFallback;
+      if (dom.elLoadingOverlay) dom.elLoadingOverlay.style.display = 'none';
     };
 
-    const targetSrc = elUrl || (`/api/module/${encodeURIComponent(moduleId)}/el-image?side=front`);
+    dom.elSingleImg.onload = function () {
+      if (dom.elLoadingOverlay) dom.elLoadingOverlay.style.display = 'none';
+    };
+
+    // If no valid module ID yet, immediately show sample fallback image (never leave black)
+    if (!moduleId || moduleId === 'Waiting for Module...') {
+      dom.elSingleImg.src = finalFallback;
+      return;
+    }
+
+    const bustParam = forceBust ? `&_t=${Date.now()}` : '';
+    const targetSrc = elUrl 
+      ? (elUrl.includes('?') ? `${elUrl}${bustParam}` : `${elUrl}?${bustParam.slice(1)}`)
+      : (`/api/module/${encodeURIComponent(moduleId)}/el-image?side=front${bustParam}`);
+    
     dom.elSingleImg.src = targetSrc;
   }
 
@@ -492,11 +513,12 @@
   // =========================================================================
   // 5. Fetch and Load Telemetry For Module
   // =========================================================================
-  async function loadTelemetryForModule(moduleId) {
-    if (!moduleId) {
+  async function loadTelemetryForModule(moduleId, forceBust = false) {
+    if (!moduleId || moduleId === 'Waiting for Module...') {
       state.moduleId = '';
       if (dom.displayModuleId) dom.displayModuleId.textContent = 'Waiting for Module...';
       if (dom.valHipotModule) dom.valHipotModule.textContent = '--';
+      updateSingleElImage(null);
       return;
     }
     state.moduleId = moduleId;
@@ -505,16 +527,17 @@
     if (dom.valHipotModule) dom.valHipotModule.textContent = moduleId;
 
     // Immediately trigger EL image update
-    updateSingleElImage(moduleId);
+    updateSingleElImage(moduleId, null, null, forceBust);
 
     // 1. Try `/api/telemetry?module_id=...`
     try {
-      const res = await fetch(`/api/telemetry?module_id=${encodeURIComponent(moduleId)}`);
+      const bust = forceBust ? `&_t=${Date.now()}` : '';
+      const res = await fetch(`/api/telemetry?module_id=${encodeURIComponent(moduleId)}${bust}`);
       if (res.ok) {
         const data = await res.json();
         const elUrl = data.el_image || (Array.isArray(data.el_images) ? data.el_images[0] : null);
         if (elUrl) {
-          updateSingleElImage(moduleId, elUrl);
+          updateSingleElImage(moduleId, elUrl, null, forceBust);
         }
         const sunsim = data.sun_simulator || data.sunsim;
         if (sunsim) {
@@ -620,7 +643,7 @@
       }
     });
 
-    // Vector 4: Reliable LocalStorage & Active Module Polling (Guarantees zero flicker)
+    // Vector 4: Reliable LocalStorage & Active Module Polling (Guarantees cross-screen sync)
     setInterval(async () => {
       try {
         const localActive = localStorage.getItem('fvi_active_module_id');
@@ -628,15 +651,13 @@
           loadTelemetryForModule(localActive);
           return;
         }
-        // Only if localStorage has no active module (e.g. separate browser window/device), check /api/module/active
-        if (!localActive) {
-          const res = await fetch('/api/module/active');
-          if (res.ok) {
-            const data = await res.json();
-            const activeId = data.module_id || data.panel_id;
-            if (activeId && activeId !== state.moduleId) {
-              loadTelemetryForModule(activeId);
-            }
+        // Poll /api/module/active from server to synchronize across separate devices / screens
+        const res = await fetch('/api/module/active');
+        if (res.ok) {
+          const data = await res.json();
+          const activeId = data.module_id || data.panel_id;
+          if (activeId && activeId !== state.moduleId) {
+            loadTelemetryForModule(activeId);
           }
         }
       } catch (e) {}
@@ -650,6 +671,33 @@
     queryDom();
     initPmaxCanvas();
     initLiveSync();
+
+    // Wire up explicit Refresh Image button
+    if (dom.btnRefreshTelemetry) {
+      dom.btnRefreshTelemetry.addEventListener('click', async () => {
+        dom.btnRefreshTelemetry.classList.add('spinning');
+        try {
+          // Check localStorage or active module endpoint
+          let targetMod = state.moduleId || localStorage.getItem('fvi_active_module_id');
+          if (!targetMod) {
+            try {
+              const res = await fetch('/api/module/active');
+              if (res.ok) {
+                const data = await res.json();
+                targetMod = data.module_id || data.panel_id;
+              }
+            } catch (e) {}
+          }
+          if (targetMod) {
+            await loadTelemetryForModule(targetMod, true);
+          }
+        } finally {
+          setTimeout(() => {
+            if (dom.btnRefreshTelemetry) dom.btnRefreshTelemetry.classList.remove('spinning');
+          }, 800);
+        }
+      });
+    }
 
     // Check localStorage first
     const savedActive = localStorage.getItem('fvi_active_module_id');
@@ -679,8 +727,8 @@
       }
     } catch (e) {}
 
-    // Fallback to default
-    loadTelemetryForModule(state.moduleId);
+    // Fallback: render baseline sample image immediately (never leave pitch black)
+    updateSingleElImage(null);
   }
 
   if (document.readyState === 'loading') {

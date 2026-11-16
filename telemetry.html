@@ -22,8 +22,16 @@
     <div class="module-sync-section">
       <div class="module-id-display">
         <span class="module-label">ACTIVE MODULE:</span>
-        <span class="module-val" id="display-module-id">USM0112208260078</span>
+        <span class="module-val" id="display-module-id">Waiting for Module...</span>
       </div>
+      <button type="button" class="btn-refresh-telemetry" id="btn-refresh-telemetry" title="Force re-fetch active module image and telemetry">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+          <polyline points="23 4 23 10 17 10"></polyline>
+          <polyline points="1 20 1 14 7 14"></polyline>
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+        </svg>
+        <span>Refresh Image</span>
+      </button>
     </div>
   </header>
 
@@ -49,6 +57,9 @@
           <!-- Single Module EL Image View - 100% edge-to-edge -->
           <div class="el-single-viewport">
             <img src="sample_el_1.jpg" alt="Active Module EL Image" class="el-single-img" id="el-single-img" />
+            <div class="el-loading-overlay" id="el-loading-overlay" style="display: none;">
+              <span class="el-loading-text">Loading live EL inspection imagery...</span>
+            </div>
           </div>
         </div>
       </div>

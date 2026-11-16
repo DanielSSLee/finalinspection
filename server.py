@@ -394,6 +394,33 @@ def get_el2_metadata(module_id):
         "tester_name": ""
     }
 
+def get_latest_production_module():
+    """
+    Queries dbo.EL2 or dbo.IV_Flasher in MSSQL PL2 for the latest live module on Line 2
+    so the station display always boots up with the current production panel.
+    """
+    conn, engine = get_mssql_read_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT TOP 1 Module_ID FROM dbo.EL2 ORDER BY Record_ID DESC")
+            row = cur.fetchone()
+            if row and row[0]:
+                conn.close()
+                return str(row[0]).strip()
+            cur.execute("SELECT TOP 1 Module_ID FROM dbo.IV_Flasher ORDER BY Record_ID DESC")
+            row2 = cur.fetchone()
+            if row2 and row2[0]:
+                conn.close()
+                return str(row2[0]).strip()
+            conn.close()
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return ""
+
 # In-Memory State
 active_clients = []
 current_conveyor_panel = {
@@ -1524,9 +1551,16 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
 
         # Active Module Synchronisation Endpoint
         if path == "/api/module/active":
+            global active_main_screen_module
+            mod = active_main_screen_module or current_conveyor_panel.get("panel_id")
+            if not mod or not str(mod).startswith("USM"):
+                latest = get_latest_production_module()
+                if latest:
+                    active_main_screen_module = latest
+                    mod = latest
             self.send_json(200, {
-                "module_id": active_main_screen_module,
-                "panel_id": active_main_screen_module
+                "module_id": mod or "",
+                "panel_id": mod or ""
             })
             return
 
