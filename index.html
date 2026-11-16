@@ -24,10 +24,8 @@
 
       <!-- Real-Time Hardware & DB Integration Status Pills -->
       <div class="header-segment status-pills-group" id="header-status-group">
-        <div class="status-indicator-pill status-queue" id="mqtt-queue-pill"
-          title="Active Conveyor Channel &amp; Queued Modules">
+        <div class="status-indicator-pill status-queue" id="mqtt-queue-pill" title="Active Conveyor Channel (CH88)">
           <span class="queue-channel-badge" id="queue-channel-badge">CH88</span>
-          <span class="queue-count-text" id="queue-count-text">Q: 0</span>
         </div>
       </div>
 
@@ -39,8 +37,8 @@
             <rect x="2" y="4" width="20" height="16" rx="1"></rect>
             <path d="M6 8h3M6 12h2M6 16h4M13 8h5M13 12h2M13 16h5"></path>
           </svg>
-          <input type="text" id="module-id-input" value="" maxlength="16" spellcheck="false"
-            autocomplete="off" placeholder="e.g. USM0112208260078">
+          <input type="text" id="module-id-input" value="" maxlength="16" spellcheck="false" autocomplete="off"
+            placeholder="e.g. USM0112208260078">
         </div>
 
         <!-- Operator CMMS Profile Badge Button -->
@@ -147,7 +145,8 @@
           </table>
           <div class="empty-history" id="empty-history-state">
             <span class="empty-title">Ready for inspection</span>
-            <span class="empty-subtitle">&mdash; Click any cell, perimeter frame bar, center busbar, or junction box on the outlines below to log defects.</span>
+            <span class="empty-subtitle">&mdash; Click any cell, perimeter frame bar, center busbar, or junction box on
+              the outlines below to log defects.</span>
           </div>
         </div>
         <span style="display: none;" id="stat-defect-count">0</span>
@@ -159,7 +158,8 @@
         <div class="outline-card-header">
           <div class="card-title-group">
             <span class="side-indicator-tag tag-front">FRONT SIDE OUTLINE</span>
-            <span class="card-subtitle">24&times;6 Silicon Matrix (144 Cells: A1&ndash;F24) &bull; Center Busbar (BBAR) &bull; Uniform Outer Frame (FRAME)</span>
+            <span class="card-subtitle">24&times;6 Silicon Matrix (144 Cells: A1&ndash;F24) &bull; Center Busbar (BBAR)
+              &bull; Uniform Outer Frame (FRAME)</span>
           </div>
           <div class="card-legend">
             <span class="legend-item"><span class="legend-swatch swatch-cell"></span> Cell Matrix (A1&ndash;F24)</span>
@@ -175,7 +175,8 @@
             <!-- Left Y Axis A..F -->
             <div class="axis-y-col" id="axis-y-front"></div>
             <div class="outline-stage" id="stage-front" data-side="front">
-              <img src="pv-module-front-outline.png" alt="Front PV Module Outline" class="stage-bg-image" draggable="false">
+              <img src="pv-module-front-outline.png" alt="Front PV Module Outline" class="stage-bg-image"
+                draggable="false">
 
               <!-- Uniform Outer Frame (Single Selectable Perimeter Area) -->
               <div class="uniform-frame-zone" data-side="front" data-loc="FRM" data-loc-type="front_frame"
@@ -211,7 +212,8 @@
         <div class="outline-card-header">
           <div class="card-title-group">
             <span class="side-indicator-tag tag-back">BACK SIDE OUTLINE</span>
-            <span class="card-subtitle">24&times;6 Grid &bull; Backsheet &bull; 3 Function Boxes (JBX1 Top &bull; JBX2 Mid &bull; JBX3 Bot) &bull; Uniform Outer Frame (FRAME)</span>
+            <span class="card-subtitle">24&times;6 Grid &bull; Backsheet &bull; 3 Function Boxes (JBX1 Top &bull; JBX2
+              Mid &bull; JBX3 Bot) &bull; Uniform Outer Frame (FRAME)</span>
           </div>
           <div class="card-legend">
             <span class="legend-item"><span class="legend-swatch swatch-jbox"></span> Function Box (JBX1/2/3)</span>
@@ -227,7 +229,8 @@
             <!-- Left Y Axis A..F -->
             <div class="axis-y-col" id="axis-y-back"></div>
             <div class="outline-stage" id="stage-back" data-side="back">
-              <img src="pv-module-back-outline.png" alt="Back PV Module Outline" class="stage-bg-image" draggable="false">
+              <img src="pv-module-back-outline.png" alt="Back PV Module Outline" class="stage-bg-image"
+                draggable="false">
 
               <!-- Uniform Outer Frame (Single Selectable Perimeter Area) -->
               <div class="uniform-frame-zone" data-side="back" data-loc="FRM" data-loc-type="back_frame"
@@ -314,8 +317,8 @@
     </main>
 
     <!-- Contextual Comic Speech Bubble Popover (Floats next to clicked location) -->
-    <div class="cell-comic-bubble" id="cell-comic-bubble" style="display: none;" role="dialog"
-      aria-modal="true" aria-label="Defect Selection">
+    <div class="cell-comic-bubble" id="cell-comic-bubble" style="display: none;" role="dialog" aria-modal="true"
+      aria-label="Defect Selection">
       <div class="bubble-arrow" id="bubble-arrow"></div>
 
       <div class="bubble-header">
@@ -335,7 +338,8 @@
           </svg>
           <input type="text" id="bubble-search-input" class="bubble-search-field"
             placeholder="Search defect (e.g. crack, scratch, J-Box)..." autocomplete="off">
-          <button type="button" class="bubble-search-clear" id="btn-clear-search" style="display: none;">&times;</button>
+          <button type="button" class="bubble-search-clear" id="btn-clear-search"
+            style="display: none;">&times;</button>
         </div>
 
         <!-- Location Preset Quick-Pick Chips -->
@@ -409,7 +413,8 @@
               <line x1="12" y1="8" x2="12" y2="12"></line>
               <line x1="12" y1="16" x2="12.01" y2="16"></line>
             </svg>
-            <p>Please verify that the physical module serial number on the conveyor matches the active serial number before submitting the grade.</p>
+            <p>Please verify that the physical module serial number on the conveyor matches the active serial number
+              before submitting the grade.</p>
           </div>
 
           <div class="verify-details-card">
@@ -445,22 +450,25 @@
             </label>
             <div class="verify-barcode-input-wrapper">
               <input type="text" id="verify-barcode-input" class="verify-barcode-input"
-                placeholder="Scan physical module barcode here (pasted code auto-verifies)..."
-                autocomplete="off" maxlength="24">
+                placeholder="Scan physical module barcode here (pasted code auto-verifies)..." autocomplete="off"
+                maxlength="24">
             </div>
             <div class="verify-scan-status" id="verify-scan-status">
               Waiting for physical barcode scan, or click 'Yes — Serial Matches' below.
             </div>
-            <button type="button" class="btn-verify-switch-scanned" id="btn-verify-switch-scanned" style="display: none;">
+            <button type="button" class="btn-verify-switch-scanned" id="btn-verify-switch-scanned"
+              style="display: none;">
               Switch Active Module to Scanned Serial
             </button>
           </div>
         </div>
         <div class="modal-footer verify-footer">
-          <button type="button" class="console-btn secondary" id="btn-verify-cancel" title="Cancel or edit serial number [Esc]">
+          <button type="button" class="console-btn secondary" id="btn-verify-cancel"
+            title="Cancel or edit serial number [Esc]">
             Cancel / Edit Serial
           </button>
-          <button type="button" class="console-btn primary btn-verify-submit" id="btn-verify-confirm" title="Confirm and submit grade to MES [Enter]">
+          <button type="button" class="console-btn primary btn-verify-submit" id="btn-verify-confirm"
+            title="Confirm and submit grade to MES [Enter]">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16">
               <polyline points="20 6 9 17 4 12"></polyline>
             </svg>
@@ -471,8 +479,7 @@
     </div>
 
     <!-- CMMS Inspector Login & Profile Modal -->
-    <div class="modal-backdrop" id="login-modal" role="dialog" aria-modal="true"
-      aria-labelledby="login-dialog-title">
+    <div class="modal-backdrop" id="login-modal" role="dialog" aria-modal="true" aria-labelledby="login-dialog-title">
       <div class="modal-dialog">
         <div class="modal-header">
           <div class="modal-title-group">
@@ -489,14 +496,15 @@
             <form id="cmms-login-form" autocomplete="on">
               <div class="login-field-group">
                 <label for="login-username" class="login-label">Operator Full Name</label>
-                <input type="text" id="login-username" class="console-input"
-                  placeholder="e.g. John Doe, Alice Smith" required autocomplete="name">
+                <input type="text" id="login-username" class="console-input" placeholder="e.g. John Doe, Alice Smith"
+                  required autocomplete="name">
                 <span class="login-field-hint">Enter your First Name and Last Name as registered in plant CMMS</span>
               </div>
 
               <div class="login-field-group" style="display: none;">
                 <label for="login-password" class="login-label">Badge PIN</label>
-                <input type="password" id="login-password" class="console-input" value="1234" autocomplete="current-password">
+                <input type="password" id="login-password" class="console-input" value="1234"
+                  autocomplete="current-password">
               </div>
 
               <div class="login-logout-notice" style="margin-top: 14px;">
@@ -555,8 +563,7 @@
     </div>
 
     <!-- Hardware & Conveyor Simulation Dialog -->
-    <div class="modal-backdrop" id="simulator-modal" role="dialog" aria-modal="true"
-      aria-labelledby="sim-dialog-title">
+    <div class="modal-backdrop" id="simulator-modal" role="dialog" aria-modal="true" aria-labelledby="sim-dialog-title">
       <div class="modal-dialog">
         <div class="modal-header">
           <div class="modal-title-group">
@@ -580,11 +587,16 @@
 
           <div class="sim-presets-group">
             <span class="demo-bar-label">Conveyor Test Modules:</span>
-            <button type="button" class="btn-demo-user btn-sim-preset" data-panel="USM0112208260078">USM0112208260078</button>
-            <button type="button" class="btn-demo-user btn-sim-preset" data-panel="USM0111208260304">USM0111208260304</button>
-            <button type="button" class="btn-demo-user btn-sim-preset" data-panel="USM0111208260302">USM0111208260302</button>
-            <button type="button" class="btn-demo-user btn-sim-preset" data-panel="USM0111208260208">USM0111208260208</button>
-            <button type="button" class="btn-demo-user btn-sim-preset" data-panel="USM0111208260303">USM0111208260303</button>
+            <button type="button" class="btn-demo-user btn-sim-preset"
+              data-panel="USM0112208260078">USM0112208260078</button>
+            <button type="button" class="btn-demo-user btn-sim-preset"
+              data-panel="USM0111208260304">USM0111208260304</button>
+            <button type="button" class="btn-demo-user btn-sim-preset"
+              data-panel="USM0111208260302">USM0111208260302</button>
+            <button type="button" class="btn-demo-user btn-sim-preset"
+              data-panel="USM0111208260208">USM0111208260208</button>
+            <button type="button" class="btn-demo-user btn-sim-preset"
+              data-panel="USM0111208260303">USM0111208260303</button>
           </div>
         </div>
       </div>

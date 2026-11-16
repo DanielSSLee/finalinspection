@@ -155,11 +155,11 @@ const state = {
   authToken: null,
   isServerOnline: false,
   isMqttConnected: false,
-  activeChannel: 'IDLE', // 'CH88' | 'CH89' | 'MANUAL' | 'IDLE'
+  activeChannel: 'CH88', // 'CH88' | 'MANUAL'
   isManualScan: false, // true when loaded via manual barcode scan or manual typing
   moduleReadyForImmediateLoad: true, // true when waiting for next module
-  mqttQueue: [], // array of { panel_id, channel, timestamp }
-  lastSeenChannelSerial: { CH88: null, CH89: null },
+  mqttQueue: [], // unused (kept for compatibility)
+  lastSeenChannelSerial: { CH88: null },
   prefetchedCache: new Map() // serial -> { telemetry, defects }
 };
 
@@ -329,16 +329,18 @@ try {
 }
 
 function broadcastModuleChange(modId) {
-  if (!modId) return;
+  const clean = (modId || '').trim().toUpperCase();
+  if (clean.length !== 16 || !clean.startsWith('USM')) return;
+
   try {
-    localStorage.setItem('fvi_active_module_id', modId);
+    localStorage.setItem('fvi_active_module_id', clean);
   } catch (e) { }
 
   if (dualScreenSyncChannel) {
     try {
       dualScreenSyncChannel.postMessage({
         type: 'MODULE_CHANGED',
-        moduleId: modId,
+        moduleId: clean,
         timestamp: Date.now()
       });
     } catch (e) { }
@@ -348,7 +350,7 @@ function broadcastModuleChange(modId) {
     try {
       stationSyncChannel.postMessage({
         type: 'MODULE_CHANGED',
-        moduleId: modId,
+        moduleId: clean,
         timestamp: Date.now()
       });
     } catch (e) { }
@@ -358,8 +360,8 @@ function broadcastModuleChange(modId) {
     fetch(`${config.apiBaseUrl}/api/module/active`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ module_id: modId, channel: state.activeChannel || 'MANUAL' })
-    }).catch(() => {});
+      body: JSON.stringify({ module_id: clean, channel: state.activeChannel || 'MANUAL' })
+    }).catch(() => { });
   } catch (e) { }
 }
 
@@ -1228,97 +1230,51 @@ function prefetchModuleData(serial) {
     .then(data => {
       if (data) entry.telemetry = data;
     })
-    .catch(() => {});
+    .catch(() => { });
 
   fetch(`${config.apiBaseUrl}/api/defects?module_id=${encodeURIComponent(cleanMod)}`)
     .then(r => r.ok ? r.json() : null)
     .then(data => {
       if (data) entry.defects = data;
     })
-    .catch(() => {});
+    .catch(() => { });
 }
 
 /**
- * Update Conveyor Queue & Active Channel Display Pill
+ * Update Conveyor Channel Display Pill
  */
 function updateQueueDisplay() {
   if (!dom.mqttQueuePill) return;
-  const count = state.mqttQueue.length;
-  const activeChan = state.activeChannel || (state.moduleId ? 'ACTIVE' : 'IDLE');
+  const activeChan = state.activeChannel || 'CH88';
 
   if (dom.queueChannelBadge) {
     dom.queueChannelBadge.textContent = activeChan;
     dom.queueChannelBadge.className = `queue-channel-badge chan-${activeChan.toLowerCase()}`;
   }
-
-  if (dom.queueCountText) {
-    if (count === 0) {
-      dom.queueCountText.textContent = 'Q: 0';
-      if (dom.mqttQueuePill) {
-        dom.mqttQueuePill.title = `Active Conveyor Channel: ${activeChan} (Queue empty)`;
-      }
-    } else {
-      const nextMod = state.mqttQueue[0];
-      const nextChan = nextMod.channel || 'MQTT';
-      dom.queueCountText.textContent = 'Q: ' + count;
-      if (dom.mqttQueuePill) {
-        dom.mqttQueuePill.title = `Active: ${activeChan} | Queue: ${count} | Next in queue: ${nextMod.panel_id} (${nextChan})`;
-      }
-    }
-  }
-
-  if (count > 0) {
-    dom.mqttQueuePill.classList.add('has-queue');
-  } else {
-    dom.mqttQueuePill.classList.remove('has-queue');
-  }
 }
 
 /**
- * Handle Real-Time MQTT Panel Serial Updates (CH88 / CH89)
+ * Handle Real-Time MQTT Panel Serial Updates (CH88)
  */
 function handleIncomingMqttSerial(serial, channel) {
   if (!serial) return;
-  const cleanSerial = serial.trim().toUpperCase().slice(0, 16);
-  if (!cleanSerial.startsWith('USM')) return;
+  if (channel && channel.toUpperCase() !== 'CH88' && channel.toUpperCase() !== 'MQTT') return;
 
-  // Deduplication per channel
-  if (channel && state.lastSeenChannelSerial[channel] === cleanSerial) {
+  const cleanSerial = serial.trim().toUpperCase().slice(0, 16);
+  if (cleanSerial.length !== 16 || !cleanSerial.startsWith('USM')) return;
+
+  // Deduplicate against state.lastSeenChannelSerial['CH88']
+  if (state.lastSeenChannelSerial['CH88'] === cleanSerial) {
     return;
   }
-  if (channel) {
-    state.lastSeenChannelSerial[channel] = cleanSerial;
-  }
+  state.lastSeenChannelSerial['CH88'] = cleanSerial;
 
   // Background pre-fetch database and FTP telemetry & defects
   prefetchModuleData(cleanSerial);
 
-  // Check if screen is free for immediate loading
-  const isScreenFree = !state.moduleId || (
-    state.moduleReadyForImmediateLoad === true &&
-    state.defects.size === 0 &&
-    !state.grade &&
-    !state.isManualScan
-  );
-
-  if (isScreenFree) {
-    // Immediate load onto screen
-    loadModule(cleanSerial, channel, false);
-    state.moduleReadyForImmediateLoad = false;
-    showToast(`Conveyor [${channel || 'MQTT'}]: Loaded ${cleanSerial}`, 'info');
-  } else if (cleanSerial !== state.moduleId) {
-    // Active module is locked on screen being graded; enqueue to prevent interruption
-    const alreadyQueued = state.mqttQueue.some(item => item.panel_id === cleanSerial);
-    if (!alreadyQueued) {
-      state.mqttQueue.push({
-        panel_id: cleanSerial,
-        channel: channel || 'MQTT',
-        timestamp: new Date().toISOString()
-      });
-      updateQueueDisplay();
-      showToast(`Queued next module from ${channel || 'MQTT'}: ${cleanSerial} (${state.mqttQueue.length} in queue)`, 'info');
-    }
-  }
+  // Load directly onto the screen
+  loadModule(cleanSerial, 'CH88', false);
+  showToast(`Conveyor [CH88]: Loaded ${cleanSerial}`, 'info');
 }
 
 /**
@@ -1506,28 +1462,19 @@ function resetModuleAfterSubmit() {
   recomputeAllowedGrades();
   updateSummaryAndHistory();
 
-  // Advance to next queued module if available
-  if (state.mqttQueue.length > 0) {
-    const nextMod = state.mqttQueue.shift();
-    updateQueueDisplay();
-    loadModule(nextMod.panel_id, nextMod.channel, false);
-    state.moduleReadyForImmediateLoad = false;
-    showToast(`Loaded next queued module [${nextMod.channel}]: ${nextMod.panel_id}`, 'success');
-  } else {
-    // Reset scanner input and wait for next module from CH88 / CH89 or manual scan
-    state.moduleId = '';
-    state.activeChannel = 'IDLE';
-    state.isManualScan = false;
-    state.moduleReadyForImmediateLoad = true;
-    if (dom.moduleIdInput) {
-      dom.moduleIdInput.value = '';
-      dom.moduleIdInput.focus();
-    }
-    if (dom.summaryModuleId) {
-      dom.summaryModuleId.textContent = 'Scan Barcode or Waiting for MQTT...';
-    }
-    updateQueueDisplay();
+  // Reset station for next scan or CH88 arrival
+  state.moduleId = '';
+  state.activeChannel = 'CH88';
+  state.isManualScan = false;
+  state.moduleReadyForImmediateLoad = true;
+  if (dom.moduleIdInput) {
+    dom.moduleIdInput.value = '';
+    dom.moduleIdInput.focus();
   }
+  if (dom.summaryModuleId) {
+    dom.summaryModuleId.textContent = 'Scan Barcode or Waiting for CH88...';
+  }
+  updateQueueDisplay();
 }
 
 /**
@@ -1708,17 +1655,9 @@ function attachEventListeners() {
           showToast(`Manually scanned module: ${val}`, 'success');
           soundFx.beep(800, 0.06);
         }
-      } else if (val.length < 16) {
-        state.moduleId = val;
-        state.isManualScan = true;
-        state.activeChannel = 'MANUAL';
-        state.moduleReadyForImmediateLoad = (val.length === 0);
-        if (dom.summaryModuleId) {
-          dom.summaryModuleId.textContent = val || 'Scan Barcode or Waiting for MQTT...';
-        }
-        updateQueueDisplay();
-        broadcastModuleChange(val);
       }
+      // When val.length < 16: DO NOT modify state.moduleId, DO NOT call broadcastModuleChange(val),
+      // and DO NOT reset the active module! Simply let the user finish typing/scanning until it reaches 16 characters.
     };
 
     dom.moduleIdInput.addEventListener('input', handleScannerInput);
@@ -1730,11 +1669,13 @@ function attachEventListeners() {
       if (e.key === 'Enter') {
         e.preventDefault();
         const val = dom.moduleIdInput.value.trim().toUpperCase().slice(0, 16);
-        if (val) {
+        if (val.length === 16 && val.startsWith('USM')) {
           loadModule(val, 'MANUAL', false);
           dom.moduleIdInput.blur();
           showToast(`Manually scanned module: ${val}`, 'success');
           soundFx.beep(800, 0.06);
+        } else {
+          showToast('Serial number must be 16 characters starting with USM', 'error');
         }
       }
     });
@@ -1873,7 +1814,7 @@ function attachEventListeners() {
     btn.addEventListener('click', () => {
       const p = btn.dataset.panel;
       if (p) {
-        handleIncomingMqttSerial(p, 'CH89');
+        handleIncomingMqttSerial(p, 'CH88');
         if (dom.simulatorModal) dom.simulatorModal.classList.remove('open');
       }
     });
@@ -2132,19 +2073,19 @@ function initConveyorEventStream() {
       const data = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
       if (!data) return;
 
-      // Conveyor channels CH88 and CH89
+      // Conveyor channel CH88
       if (data.ch88_serial) {
         handleIncomingMqttSerial(data.ch88_serial, 'CH88');
       }
-      if (data.ch89_serial) {
-        handleIncomingMqttSerial(data.ch89_serial, 'CH89');
-      }
 
-      // Single panel event (ignore synthetic initial baseline placeholder)
-      const panelId = data.module_id || data.panel_id || (data.current_panel && data.current_panel.panel_id);
-      const panelSource = data.source || (data.current_panel && data.current_panel.source) || '';
-      if (panelId && panelSource !== 'Initial Baseline') {
-        handleIncomingMqttSerial(panelId, data.channel || (data.current_panel && data.current_panel.channel) || 'MQTT');
+      // Single panel event (only process if channel is 'CH88')
+      const channel = (data.channel || (data.current_panel && data.current_panel.channel) || '').toUpperCase();
+      if (channel === 'CH88') {
+        const panelId = data.module_id || data.panel_id || (data.current_panel && data.current_panel.panel_id);
+        const panelSource = data.source || (data.current_panel && data.current_panel.source) || '';
+        if (panelId && panelSource !== 'Initial Baseline') {
+          handleIncomingMqttSerial(panelId, 'CH88');
+        }
       }
     } catch (e) { }
   };
@@ -2178,7 +2119,7 @@ function initConveyorEventStream() {
     } catch (e) { }
   }
 
-  // Poll current module and CH88/CH89 conveyor status immediately & every 3 seconds
+  // Poll current module and CH88 conveyor status immediately & every 3 seconds
   const pollCurrentConveyor = () => {
     fetch(`${config.apiBaseUrl}/api/module/current`)
       .then(res => res.ok ? res.json() : null)
@@ -2195,14 +2136,8 @@ function initConveyorEventStream() {
         if (data.ch88_serial) {
           handleIncomingMqttSerial(data.ch88_serial, 'CH88');
         }
-        if (data.ch89_serial) {
-          handleIncomingMqttSerial(data.ch89_serial, 'CH89');
-        }
-        if (data.panel_id && data.source !== 'Initial Baseline') {
-          handleIncomingMqttSerial(data.panel_id, data.channel || 'MQTT');
-        }
       })
-      .catch(() => {});
+      .catch(() => { });
   };
   pollCurrentConveyor();
   setInterval(pollCurrentConveyor, 3000);

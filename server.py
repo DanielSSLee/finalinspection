@@ -1159,52 +1159,56 @@ def extract_serial_from_payload(raw_payload):
 
 def handle_conveyor_serial_arrival(serial, channel="CH88"):
     """
-    Deduplicates arrivals per conveyor channel, pre-fetches DB/FTP telemetry,
-    maintains server-side current panel and FIFO queue, and broadcasts SSE updates.
+    Handles conveyor arrivals on CH88, pre-fetches DB/FTP telemetry,
+    sets active module directly (no queueing), and broadcasts SSE updates.
     """
     global current_conveyor_panel, mqtt_channel_serials, mqtt_queue, active_main_screen_module
 
-    channel = "CH89" if str(channel).upper() in ("CH89", "89") else "CH88"
-
-    # Deduplication check against the channel's previous serial
-    last_serial = mqtt_channel_serials.get(channel)
-    if serial == last_serial:
-        # No change on this conveyor channel
+    if str(channel).upper() not in ("CH88", "88", "MQTT"):
         return
 
-    print(f"[MQTT Conveyor] New serial arrived on {channel}: {serial} (Previous: {last_serial})")
-    mqtt_channel_serials[channel] = serial
+    if not serial:
+        return
+    clean_serial = str(serial).strip().upper()[:16]
+    if len(clean_serial) != 16 or not clean_serial.startswith("USM"):
+        return
+
+    # Deduplication check against CH88 previous serial
+    last_serial = mqtt_channel_serials.get("CH88")
+    if clean_serial == last_serial:
+        return
+
+    print(f"[MQTT Conveyor] New serial arrived on CH88: {clean_serial} (Previous: {last_serial})")
+    mqtt_channel_serials["CH88"] = clean_serial
     ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     # 1. Background pre-fetch all telemetry & FTP image
-    threading.Thread(target=prefetch_all_data_for_module, args=(serial,), daemon=True).start()
+    threading.Thread(target=prefetch_all_data_for_module, args=(clean_serial,), daemon=True).start()
 
-    # 2. Update active / queue state
+    # 2. Update active state immediately & clear queue
     panel_entry = {
-        "panel_id": serial,
-        "channel": channel,
+        "panel_id": clean_serial,
+        "channel": "CH88",
         "timestamp": ts,
-        "source": f"MQTT {channel}"
+        "source": "MQTT CH88"
     }
 
-    if current_conveyor_panel.get("source") == "Initial Baseline" or not current_conveyor_panel.get("panel_id"):
-        current_conveyor_panel = panel_entry
-        active_main_screen_module = current_conveyor_panel["panel_id"]
-    elif serial != current_conveyor_panel.get("panel_id") and not any(item.get("panel_id") == serial for item in mqtt_queue):
-        mqtt_queue.append(panel_entry)
+    current_conveyor_panel = panel_entry
+    active_main_screen_module = clean_serial
+    mqtt_queue.clear()
 
     # 3. Broadcast via SSE (both named PANEL_ARRIVED and default message)
     update_event = {
         "type": "MQTT_CONVEYOR_UPDATE",
-        "module_id": serial,
-        "panel_id": serial,
-        "queued_serial": serial,
-        "active_module_id": current_conveyor_panel.get("panel_id"),
-        "channel": channel,
-        "ch88_serial": mqtt_channel_serials.get("CH88"),
-        "ch89_serial": mqtt_channel_serials.get("CH89"),
+        "module_id": clean_serial,
+        "panel_id": clean_serial,
+        "queued_serial": clean_serial,
+        "active_module_id": clean_serial,
+        "channel": "CH88",
+        "ch88_serial": clean_serial,
+        "ch89_serial": None,
         "current_panel": current_conveyor_panel,
-        "queue": mqtt_queue,
+        "queue": [],
         "timestamp": ts
     }
     broadcast_sse("PANEL_ARRIVED", update_event)
@@ -1287,9 +1291,7 @@ def _run_socket_mqtt_listener():
     username = CONFIG["mqtt"].get("username", "line2-equipment")
     password = CONFIG["mqtt"].get("password", "3cwDa4Lf6NZH2u")
     topics_to_sub = [
-        ("usm/cstx/prod/line2/CH88", 0),
-        ("usm/cstx/prod/line2/CH89", 0),
-        ("usm/cstx/prod/line2/#", 0)
+        ("usm/cstx/prod/line2/CH88", 0)
     ]
 
     client_id = f"fvi-line2-{int(time.time()) % 100000}"
@@ -1321,11 +1323,11 @@ def _run_socket_mqtt_listener():
             mqtt_connected = True
             print(f"[MQTT] Connected successfully to plant broker {broker}:{port}!")
 
-            # 3. Send SUBSCRIBE for CH88 and CH89
+            # 3. Send SUBSCRIBE for CH88
             sub_pkt = _build_subscribe_packet(packet_id, topics_to_sub)
             packet_id = (packet_id + 1) & 0xFFFF or 1
             sock.sendall(sub_pkt)
-            print(f"[MQTT] Subscribed to Line 2 conveyor topics: CH88 & CH89")
+            print(f"[MQTT] Subscribed to Line 2 conveyor topic: CH88")
 
             last_ping = time.time()
 
@@ -1381,10 +1383,12 @@ def _run_socket_mqtt_listener():
                                 sock.sendall(b"\x40\x02" + pkt_id_bytes)
                         msg_payload = body[offset:]
 
-                        channel = "CH89" if ("CH89" in topic_str.upper() or topic_str.endswith("89")) else "CH88"
-                        serial = extract_serial_from_payload(msg_payload)
-                        if serial:
-                            handle_conveyor_serial_arrival(serial, channel)
+                        topic_upper = topic_str.upper()
+                        if "CH88" in topic_upper or topic_upper.endswith("88"):
+                            channel = "CH88"
+                            serial = extract_serial_from_payload(msg_payload)
+                            if serial:
+                                handle_conveyor_serial_arrival(serial, channel)
                     except Exception as me:
                         print(f"[MQTT Message Parse Error] {me}")
 
@@ -1552,15 +1556,12 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
         # Active Module Synchronisation Endpoint
         if path == "/api/module/active":
             global active_main_screen_module
-            mod = active_main_screen_module or current_conveyor_panel.get("panel_id")
-            if not mod or not str(mod).startswith("USM"):
-                latest = get_latest_production_module()
-                if latest:
-                    active_main_screen_module = latest
-                    mod = latest
+            mod = active_main_screen_module or current_conveyor_panel.get("panel_id") or ""
+            if mod and (len(str(mod)) != 16 or not str(mod).startswith("USM")):
+                mod = ""
             self.send_json(200, {
-                "module_id": mod or "",
-                "panel_id": mod or ""
+                "module_id": mod,
+                "panel_id": mod
             })
             return
 
@@ -1864,12 +1865,12 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
 
         # Active Module Synchronisation (from Main Screen)
         if path == "/api/module/active":
-            module_id = str(payload.get("module_id") or payload.get("panel_id") or "").strip()[:16]
-            if module_id:
+            module_id = str(payload.get("module_id") or payload.get("panel_id") or "").strip().upper()[:16]
+            if len(module_id) == 16 and module_id.startswith("USM"):
                 active_main_screen_module = module_id
                 current_conveyor_panel["panel_id"] = module_id
                 channel = str(payload.get("channel", "CH88")).strip().upper()
-                if channel in ("CH88", "CH89"):
+                if channel in ("CH88", "MANUAL"):
                     current_conveyor_panel["channel"] = channel
                 broadcast_sse("ACTIVE_MODULE_SYNC", {
                     "module_id": module_id,
@@ -2126,19 +2127,15 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
             })
             return
 
-        # 7. Simulate MQTT Conveyor Panel Arrival (Supports CH88 & CH89 for Factory Testing)
+        # 7. Simulate MQTT Conveyor Panel Arrival (CH88)
         if path == "/api/conveyor/simulate-mqtt":
             panel_id = str(payload.get("panel_id") or payload.get("module_id", "USM0111208260304")).strip().upper()
-            channel = str(payload.get("channel", "CH88")).strip().upper()
-            if channel not in ("CH88", "CH89"):
-                channel = "CH88"
-            handle_conveyor_serial_arrival(panel_id, channel)
+            handle_conveyor_serial_arrival(panel_id, "CH88")
             self.send_json(200, {
                 "success": True,
                 "current_panel": current_conveyor_panel,
-                "queue": mqtt_queue,
-                "ch88_serial": mqtt_channel_serials.get("CH88"),
-                "ch89_serial": mqtt_channel_serials.get("CH89")
+                "queue": [],
+                "ch88_serial": mqtt_channel_serials.get("CH88")
             })
             return
 

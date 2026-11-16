@@ -15,6 +15,7 @@
   // Application State
   const state = {
     moduleId: '',
+    loadedElModuleId: '',
     sunsimData: null,
     hipotData: null,
     hoverV: null,
@@ -61,6 +62,11 @@
   function updateSingleElImage(moduleId, elUrl, fallbackUrl, forceBust = false) {
     if (!dom.elSingleImg) return;
 
+    if (moduleId && moduleId === state.loadedElModuleId && !forceBust) {
+      return;
+    }
+    state.loadedElModuleId = moduleId || '';
+
     // Ensure the <img> tag is always visible
     dom.elSingleImg.style.display = 'block';
 
@@ -75,8 +81,18 @@
     const defaultFallback = `sample_el_${sampleIdx}.jpg`;
     const finalFallback = fallbackUrl || defaultFallback;
 
-    // Attach graceful fallback handler if live server/FTP image fails to load
+    // Attach graceful fallback handler with 1-time automatic retry before falling back to sample image
+    let retried = false;
     dom.elSingleImg.onerror = function () {
+      if (!retried && moduleId && moduleId.length === 16) {
+        retried = true;
+        setTimeout(() => {
+          if (state.moduleId === moduleId) {
+            dom.elSingleImg.src = `/api/module/${encodeURIComponent(moduleId)}/el-image?side=front&_t=${Date.now()}`;
+          }
+        }, 400);
+        return;
+      }
       console.warn('[Telemetry] EL image load failed for', moduleId, 'falling back to', finalFallback);
       this.onerror = null;
       this.src = finalFallback;
@@ -94,10 +110,10 @@
     }
 
     const bustParam = forceBust ? `&_t=${Date.now()}` : '';
-    const targetSrc = elUrl 
+    const targetSrc = elUrl
       ? (elUrl.includes('?') ? `${elUrl}${bustParam}` : `${elUrl}?${bustParam.slice(1)}`)
       : (`/api/module/${encodeURIComponent(moduleId)}/el-image?side=front${bustParam}`);
-    
+
     dom.elSingleImg.src = targetSrc;
   }
 
@@ -514,31 +530,30 @@
   // 5. Fetch and Load Telemetry For Module
   // =========================================================================
   async function loadTelemetryForModule(moduleId, forceBust = false) {
-    if (!moduleId || moduleId === 'Waiting for Module...') {
-      state.moduleId = '';
-      if (dom.displayModuleId) dom.displayModuleId.textContent = 'Waiting for Module...';
-      if (dom.valHipotModule) dom.valHipotModule.textContent = '--';
-      updateSingleElImage(null);
+    const cleanMod = String(moduleId || '').trim().toUpperCase();
+    if (cleanMod.length !== 16 || !cleanMod.startsWith('USM')) {
+      if (!state.moduleId) {
+        updateSingleElImage(null);
+      }
       return;
     }
-    state.moduleId = moduleId;
+    if (cleanMod === state.moduleId && !forceBust) {
+      return; // Already locked on this module; do not reload
+    }
+    state.moduleId = cleanMod;
 
-    if (dom.displayModuleId) dom.displayModuleId.textContent = moduleId;
-    if (dom.valHipotModule) dom.valHipotModule.textContent = moduleId;
+    if (dom.displayModuleId) dom.displayModuleId.textContent = cleanMod;
+    if (dom.valHipotModule) dom.valHipotModule.textContent = cleanMod;
 
-    // Immediately trigger EL image update
-    updateSingleElImage(moduleId, null, null, forceBust);
+    // Immediately trigger EL image update ONCE
+    updateSingleElImage(cleanMod, null, null, forceBust);
 
     // 1. Try `/api/telemetry?module_id=...`
     try {
       const bust = forceBust ? `&_t=${Date.now()}` : '';
-      const res = await fetch(`/api/telemetry?module_id=${encodeURIComponent(moduleId)}${bust}`);
+      const res = await fetch(`/api/telemetry?module_id=${encodeURIComponent(cleanMod)}${bust}`);
       if (res.ok) {
         const data = await res.json();
-        const elUrl = data.el_image || (Array.isArray(data.el_images) ? data.el_images[0] : null);
-        if (elUrl) {
-          updateSingleElImage(moduleId, elUrl, null, forceBust);
-        }
         const sunsim = data.sun_simulator || data.sunsim;
         if (sunsim) {
           state.sunsimData = sunsim;
@@ -557,7 +572,7 @@
 
     // 2. Try `/api/telemetry/all?module_id=...`
     try {
-      const resAll = await fetch(`/api/telemetry/all?module_id=${encodeURIComponent(moduleId)}`);
+      const resAll = await fetch(`/api/telemetry/all?module_id=${encodeURIComponent(cleanMod)}`);
       if (resAll.ok) {
         const data = await resAll.json();
         const sunsim = data.sunsim || data.sun_simulator;
@@ -579,8 +594,8 @@
     // 3. Fallback: Fetch SunSim and Hi-Pot endpoints in parallel
     try {
       const [sunsimRes, hipotRes] = await Promise.all([
-        fetch(`/api/telemetry/sunsim?module_id=${encodeURIComponent(moduleId)}`),
-        fetch(`/api/telemetry/hipot?module_id=${encodeURIComponent(moduleId)}`)
+        fetch(`/api/telemetry/sunsim?module_id=${encodeURIComponent(cleanMod)}`),
+        fetch(`/api/telemetry/hipot?module_id=${encodeURIComponent(cleanMod)}`)
       ]);
 
       if (sunsimRes.ok) {
@@ -608,9 +623,10 @@
       dualScreenChannel.onmessage = (event) => {
         if (!event.data) return;
         const modId = event.data.moduleId || event.data.panel_id || event.data.serialNumber;
-        if (modId && modId !== state.moduleId) {
-          console.log('[DualScreen Sync] Module received via fvi_DualScreen_Sync:', modId);
-          loadTelemetryForModule(modId);
+        const cleanId = String(modId || '').trim().toUpperCase();
+        if (cleanId.length === 16 && cleanId.startsWith('USM') && cleanId !== state.moduleId) {
+          console.log('[DualScreen Sync] Module received via fvi_DualScreen_Sync:', cleanId);
+          loadTelemetryForModule(cleanId);
         }
       };
     } catch (e) {
@@ -623,9 +639,10 @@
       stationChannel.onmessage = (event) => {
         if (!event.data) return;
         const modId = event.data.moduleId || event.data.panel_id;
-        if (modId && modId !== state.moduleId) {
-          console.log('[Station Sync] Module received via fvi_station_sync:', modId);
-          loadTelemetryForModule(modId);
+        const cleanId = String(modId || '').trim().toUpperCase();
+        if (cleanId.length === 16 && cleanId.startsWith('USM') && cleanId !== state.moduleId) {
+          console.log('[Station Sync] Module received via fvi_station_sync:', cleanId);
+          loadTelemetryForModule(cleanId);
         }
       };
     } catch (e) {
@@ -636,32 +653,57 @@
     window.addEventListener('storage', (event) => {
       if (event.key === 'fvi_active_module_id' || event.key === 'fvi_module_id' || event.key === 'fvi_cmms_module') {
         const newMod = event.newValue;
-        if (newMod && newMod !== state.moduleId) {
-          console.log('[Storage Sync] Module changed via localStorage:', newMod);
-          loadTelemetryForModule(newMod);
+        const cleanId = String(newMod || '').trim().toUpperCase();
+        if (cleanId.length === 16 && cleanId.startsWith('USM') && cleanId !== state.moduleId) {
+          console.log('[Storage Sync] Module changed via localStorage:', cleanId);
+          loadTelemetryForModule(cleanId);
         }
       }
     });
 
-    // Vector 4: Reliable LocalStorage & Active Module Polling (Guarantees cross-screen sync)
+    // Vector 4: SSE '/api/stream' event listener for ACTIVE_MODULE_SYNC and PANEL_ARRIVED
+    if (typeof EventSource !== 'undefined') {
+      try {
+        const sse = new EventSource('/api/stream');
+        const handleSyncEvent = (rawData) => {
+          try {
+            const data = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
+            if (!data) return;
+            const rawId = data.module_id || data.panel_id || (data.current_panel && data.current_panel.panel_id);
+            const cleanId = String(rawId || '').trim().toUpperCase();
+            if (cleanId.length === 16 && cleanId.startsWith('USM')) {
+              try { localStorage.setItem('fvi_active_module_id', cleanId); } catch (e) { }
+              loadTelemetryForModule(cleanId);
+            }
+          } catch (e) { }
+        };
+        sse.addEventListener('ACTIVE_MODULE_SYNC', (event) => handleSyncEvent(event.data));
+        sse.addEventListener('PANEL_ARRIVED', (event) => handleSyncEvent(event.data));
+        sse.onmessage = (event) => handleSyncEvent(event.data);
+      } catch (e) { }
+    }
+
+    // Vector 5: Reliable Polling cross-check (Guarantees cross-screen sync without ping-pong)
     setInterval(async () => {
       try {
-        const localActive = localStorage.getItem('fvi_active_module_id');
-        if (localActive && localActive.startsWith('USM') && localActive !== state.moduleId) {
-          loadTelemetryForModule(localActive);
-          return;
-        }
-        // Poll /api/module/active from server to synchronize across separate devices / screens
         const res = await fetch('/api/module/active');
         if (res.ok) {
           const data = await res.json();
-          const activeId = data.module_id || data.panel_id;
-          if (activeId && activeId !== state.moduleId) {
-            loadTelemetryForModule(activeId);
+          const serverActive = String(data.module_id || data.panel_id || '').trim().toUpperCase();
+          if (serverActive.length === 16 && serverActive.startsWith('USM')) {
+            if (serverActive !== state.moduleId) {
+              try { localStorage.setItem('fvi_active_module_id', serverActive); } catch (e) { }
+              loadTelemetryForModule(serverActive);
+            }
+            return;
           }
         }
-      } catch (e) {}
-    }, 1000);
+        const localActive = String(localStorage.getItem('fvi_active_module_id') || '').trim().toUpperCase();
+        if (localActive.length === 16 && localActive.startsWith('USM') && localActive !== state.moduleId) {
+          loadTelemetryForModule(localActive);
+        }
+      } catch (e) { }
+    }, 1500);
   }
 
   // =========================================================================
@@ -686,7 +728,7 @@
                 const data = await res.json();
                 targetMod = data.module_id || data.panel_id;
               }
-            } catch (e) {}
+            } catch (e) { }
           }
           if (targetMod) {
             await loadTelemetryForModule(targetMod, true);
@@ -700,16 +742,16 @@
     }
 
     // Check localStorage first
-    const savedActive = localStorage.getItem('fvi_active_module_id');
-    if (savedActive && savedActive.startsWith('USM')) {
+    const savedActive = String(localStorage.getItem('fvi_active_module_id') || '').trim().toUpperCase();
+    if (savedActive.length === 16 && savedActive.startsWith('USM')) {
       loadTelemetryForModule(savedActive);
       return;
     }
 
     // Check URL parameters for ?module_id=...
     const urlParams = new URLSearchParams(window.location.search);
-    const paramMod = urlParams.get('module_id') || urlParams.get('sn');
-    if (paramMod) {
+    const paramMod = String(urlParams.get('module_id') || urlParams.get('sn') || '').trim().toUpperCase();
+    if (paramMod.length === 16 && paramMod.startsWith('USM')) {
       loadTelemetryForModule(paramMod);
       return;
     }
@@ -719,13 +761,13 @@
       const res = await fetch('/api/module/active');
       if (res.ok) {
         const data = await res.json();
-        const activeId = data.module_id || data.panel_id;
-        if (activeId) {
+        const activeId = String(data.module_id || data.panel_id || '').trim().toUpperCase();
+        if (activeId.length === 16 && activeId.startsWith('USM')) {
           loadTelemetryForModule(activeId);
           return;
         }
       }
-    } catch (e) {}
+    } catch (e) { }
 
     // Fallback: render baseline sample image immediately (never leave pitch black)
     updateSingleElImage(null);
