@@ -167,9 +167,9 @@ const state = {
   prefetchedCache: new Map() // serial -> { telemetry, defects }
 };
 
-// Coordinate Configuration
-const GRID_ROWS = ['A', 'B', 'C', 'D', 'E', 'F']; // 6 Rows
-const GRID_COLS = Array.from({ length: 24 }, (_, i) => i + 1); // 1 to 24 (24 Columns)
+// Coordinate Configuration (Bottom-Up Rows A..F, Right-to-Left Columns 1..24)
+const GRID_ROWS = ['F', 'E', 'D', 'C', 'B', 'A']; // Visual top-to-bottom order so A starts at bottom and goes up to F
+const GRID_COLS = Array.from({ length: 24 }, (_, i) => 24 - i); // Visual left-to-right order (24 down to 1) so 1 starts at right and goes left to 24
 
 // Sound Effects Synthesizer
 const soundFx = {
@@ -429,7 +429,7 @@ function initApp() {
 }
 
 /**
- * Build Axis Labels (Columns 1–12, Spacer, Columns 13–24 & Rows A–F)
+ * Build Axis Labels (Columns 24–13, Spacer, Columns 12–1 & Rows F–A Bottom-Up)
  */
 function buildStageAxes(side, axisXEl, axisYEl) {
   if (!axisXEl || !axisYEl) return;
@@ -438,8 +438,8 @@ function buildStageAxes(side, axisXEl, axisYEl) {
 
   const fragX = document.createDocumentFragment();
 
-  // Left 12 Columns (1..12)
-  for (let c = 1; c <= 12; c++) {
+  // Left 12 Columns (24 down to 13, right-to-left numbering)
+  for (let c = 24; c >= 13; c--) {
     const cellX = document.createElement('div');
     cellX.className = 'axis-cell-x';
     cellX.dataset.col = c;
@@ -454,8 +454,8 @@ function buildStageAxes(side, axisXEl, axisYEl) {
   spacerX.innerHTML = '&bull;';
   fragX.appendChild(spacerX);
 
-  // Right 12 Columns (13..24)
-  for (let c = 13; c <= 24; c++) {
+  // Right 12 Columns (12 down to 1, right-to-left numbering)
+  for (let c = 12; c >= 1; c--) {
     const cellX = document.createElement('div');
     cellX.className = 'axis-cell-x';
     cellX.dataset.col = c;
@@ -465,7 +465,7 @@ function buildStageAxes(side, axisXEl, axisYEl) {
   }
   axisXEl.appendChild(fragX);
 
-  // Y Axis (Rows A..F)
+  // Y Axis (Rows F down to A so A starts at bottom and goes up)
   const fragY = document.createDocumentFragment();
   GRID_ROWS.forEach(row => {
     const cellY = document.createElement('div');
@@ -490,7 +490,7 @@ function buildStageGrid(side, gridEl, pinsLayerEl) {
   const fragPins = document.createDocumentFragment();
 
   GRID_ROWS.forEach((row, rowIdx) => {
-    GRID_COLS.forEach(col => {
+    GRID_COLS.forEach((col, colIdx) => {
       const coord = `${row}${col}`;
       const cell = document.createElement('div');
       cell.className = 'grid-cell';
@@ -505,7 +505,7 @@ function buildStageGrid(side, gridEl, pinsLayerEl) {
       cell.setAttribute('aria-label', `${side.toUpperCase()} Cell ${coord}`);
 
       // Grid placement accounting for center gap at column 13
-      const gridCol = col <= 12 ? col : col + 1;
+      const gridCol = colIdx < 12 ? colIdx + 1 : colIdx + 2;
       const gridRow = rowIdx + 1;
       cell.style.gridColumn = `${gridCol}`;
       cell.style.gridRow = `${gridRow}`;
