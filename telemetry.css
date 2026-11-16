@@ -242,6 +242,35 @@ html, body {
   line-height: 1.1;
 }
 
+.el-folder-badge {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 2px 10px;
+  border-radius: var(--radius-xs);
+  background: rgba(148, 163, 184, 0.15);
+  border: 1px solid var(--border-muted);
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.el-folder-badge.ok {
+  background: rgba(16, 185, 129, 0.22);
+  border: 1px solid #10b981;
+  color: #34d399;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.35);
+}
+
+.el-folder-badge.ng {
+  background: rgba(244, 63, 94, 0.25);
+  border: 1px solid #f43f5e;
+  color: #fb7185;
+  box-shadow: 0 0 10px rgba(244, 63, 94, 0.35);
+}
+
 .panel-actions {
   display: flex;
   align-items: center;

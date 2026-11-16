@@ -34,6 +34,7 @@
       // EL Single View Element
       elSingleImg: document.getElementById('el-single-img'),
       elPanelActions: document.getElementById('el-panel-actions'),
+      valElFolderStatus: document.getElementById('val-el-folder-status'),
 
       // SunSim Elements (dbo.IV_Flasher)
       pmaxCanvas: document.getElementById('pmax-canvas'),
@@ -529,6 +530,32 @@
   // =========================================================================
   // 5. Fetch and Load Telemetry For Module
   // =========================================================================
+  function renderElFolderStatus(folderVal, imagePath) {
+    if (!dom.valElFolderStatus) return;
+    let status = String(folderVal || '').trim().toUpperCase();
+    if (status !== 'OK' && status !== 'NG') {
+      const normPath = String(imagePath || '').replace(/\\/g, '/').toUpperCase();
+      const match = normPath.match(/\/(OK|NG)(\/|$)/);
+      if (match) {
+        status = match[1];
+      }
+    }
+
+    if (status === 'OK') {
+      dom.valElFolderStatus.textContent = 'OK';
+      dom.valElFolderStatus.className = 'el-folder-badge ok';
+      dom.valElFolderStatus.title = 'EL Image Folder: OK';
+    } else if (status === 'NG') {
+      dom.valElFolderStatus.textContent = 'NG';
+      dom.valElFolderStatus.className = 'el-folder-badge ng';
+      dom.valElFolderStatus.title = 'EL Image Folder: NG';
+    } else {
+      dom.valElFolderStatus.textContent = '--';
+      dom.valElFolderStatus.className = 'el-folder-badge';
+      dom.valElFolderStatus.title = 'EL Image Folder Status (OK / NG)';
+    }
+  }
+
   async function loadTelemetryForModule(moduleId, forceBust = false) {
     const cleanMod = String(moduleId || '').trim().toUpperCase();
     if (cleanMod.length !== 16 || !cleanMod.startsWith('USM')) {
@@ -544,6 +571,10 @@
 
     if (dom.displayModuleId) dom.displayModuleId.textContent = cleanMod;
     if (dom.valHipotModule) dom.valHipotModule.textContent = cleanMod;
+    if (dom.valElFolderStatus) {
+      dom.valElFolderStatus.textContent = '...';
+      dom.valElFolderStatus.className = 'el-folder-badge';
+    }
 
     // Immediately trigger EL image update ONCE
     updateSingleElImage(cleanMod, null, null, forceBust);
@@ -554,6 +585,20 @@
       const res = await fetch(`/api/telemetry?module_id=${encodeURIComponent(cleanMod)}${bust}`);
       if (res.ok) {
         const data = await res.json();
+        const folderStatus = data.el_folder || (data.el2 && data.el2.folder_status) || '';
+        const imgPath = (data.el2 && data.el2.image_path) || '';
+        if (folderStatus || imgPath) {
+          if (state.moduleId === cleanMod) {
+            renderElFolderStatus(folderStatus, imgPath);
+          }
+        } else {
+          fetch(`/api/telemetry/el2?module_id=${encodeURIComponent(cleanMod)}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(el2Data => {
+              if (state.moduleId === cleanMod && el2Data) renderElFolderStatus(el2Data.folder_status, el2Data.image_path);
+            })
+            .catch(() => {});
+        }
         const sunsim = data.sun_simulator || data.sunsim;
         if (sunsim) {
           state.sunsimData = sunsim;
@@ -569,6 +614,14 @@
     } catch (e) {
       console.warn('[Telemetry] /api/telemetry fetch notice:', e);
     }
+
+    // Also try fetching EL2 metadata directly for folder status on fallback paths
+    fetch(`/api/telemetry/el2?module_id=${encodeURIComponent(cleanMod)}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(el2Data => {
+        if (state.moduleId === cleanMod && el2Data) renderElFolderStatus(el2Data.folder_status, el2Data.image_path);
+      })
+      .catch(() => {});
 
     // 2. Try `/api/telemetry/all?module_id=...`
     try {

@@ -336,6 +336,66 @@ def get_hipot_telemetry(module_id):
     }
 
 
+el_folder_cache = {}  # module_id -> "OK" | "NG"
+
+
+def extract_el_folder_status(image_path="", vis_image="", ai_result=None, retrial_result=None, module_id=""):
+    """
+    Determines whether the EL image originates from the 'OK' or 'NG' folder.
+    Checks image_path / vis_image segments first, then in-memory / sidecar caches,
+    and falls back to retrial_result / ai_result booleans.
+    """
+    for p in (image_path, vis_image):
+        if not p:
+            continue
+        norm = str(p).replace("\\", "/").upper()
+        if "/OK/" in norm or norm.endswith("/OK"):
+            return "OK"
+        if "/NG/" in norm or norm.endswith("/NG"):
+            return "NG"
+
+    mod_key = str(module_id or "").strip().upper()
+    if mod_key:
+        if el_folder_cache.get(mod_key) in ("OK", "NG"):
+            return el_folder_cache[mod_key]
+        try:
+            sidecar = CACHE_DIR / f"{mod_key}.folder"
+            if sidecar.exists():
+                val = sidecar.read_text(encoding="utf-8").strip().upper()
+                if val in ("OK", "NG"):
+                    el_folder_cache[mod_key] = val
+                    return val
+        except Exception:
+            pass
+
+    for flag in (retrial_result, ai_result):
+        if flag is None:
+            continue
+        if isinstance(flag, bool):
+            return "OK" if flag else "NG"
+        if isinstance(flag, (int, float)):
+            return "OK" if flag == 1 else "NG"
+        s = str(flag).strip().upper()
+        if s in ("TRUE", "1", "OK", "PASS"):
+            return "OK"
+        if s in ("FALSE", "0", "NG", "FAIL"):
+            return "NG"
+
+    return ""
+
+
+def _cache_el_folder_status(module_id, status):
+    mod_key = str(module_id or "").strip().upper()
+    st = str(status or "").strip().upper()
+    if mod_key and st in ("OK", "NG"):
+        el_folder_cache[mod_key] = st
+        try:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            (CACHE_DIR / f"{mod_key}.folder").write_text(st, encoding="utf-8")
+        except Exception:
+            pass
+
+
 def get_el2_metadata(module_id):
     """
     Queries dbo.EL2 in MSSQL PL2 for module EL inspection metadata.
@@ -360,18 +420,32 @@ def get_el2_metadata(module_id):
                     cols = [desc[0].lower() for desc in cur.description]
                     rdict = dict(zip(cols, row))
                     conn.close()
+                    img_path = str(rdict.get("image_path") or "")
+                    vis_img = str(rdict.get("vis_image") or "")
+                    ai_res = rdict.get("airesult")
+                    retrial_res = rdict.get("retrialresult")
+                    folder_status = extract_el_folder_status(
+                        image_path=img_path,
+                        vis_image=vis_img,
+                        ai_result=ai_res,
+                        retrial_result=retrial_res,
+                        module_id=module_id
+                    )
+                    if folder_status in ("OK", "NG"):
+                        _cache_el_folder_status(module_id, folder_status)
                     return {
                         "found": True,
                         "source": f"MSSQL_PL2_LIVE ({engine})",
                         "record_id": rdict.get("record_id"),
                         "module_id": rdict.get("module_id") or module_id,
                         "tested_at": str(rdict.get("tested_at") or ""),
-                        "ai_result": rdict.get("airesult"),
-                        "retrial_result": rdict.get("retrialresult"),
-                        "image_path": str(rdict.get("image_path") or ""),
-                        "vis_image": str(rdict.get("vis_image") or ""),
+                        "ai_result": ai_res,
+                        "retrial_result": retrial_res,
+                        "image_path": img_path,
+                        "vis_image": vis_img,
                         "result_file": str(rdict.get("result_file") or ""),
-                        "tester_name": str(rdict.get("tester_name") or "")
+                        "tester_name": str(rdict.get("tester_name") or ""),
+                        "folder_status": folder_status
                     }
                 conn.close()
             except Exception as e:
@@ -380,6 +454,7 @@ def get_el2_metadata(module_id):
                 except Exception:
                     pass
 
+    fallback_folder = extract_el_folder_status(module_id=module_id)
     return {
         "found": False,
         "source": "SIMULATED_FALLBACK",
@@ -391,7 +466,8 @@ def get_el2_metadata(module_id):
         "image_path": "",
         "vis_image": "",
         "result_file": "",
-        "tester_name": ""
+        "tester_name": "",
+        "folder_status": fallback_folder
     }
 
 def get_latest_production_module():
@@ -435,6 +511,7 @@ mqtt_connected = False
 mqtt_channel_serials = {"CH88": None, "CH89": None}
 mqtt_queue = []  # list of {"panel_id": str, "channel": "CH88"|"CH89", "timestamp": str, "source": str}
 prefetched_telemetry = {}  # panel_id -> {"sunsim": ..., "hipot": ..., "el_image": ..., "el_fallback": ..., "cached_at": float}
+_initial_conveyor_seeded = False
 
 # Defect Code to IEC Type ID (int2)
 DEFECT_CODE_TO_ID = {
@@ -788,6 +865,9 @@ def fetch_el_image_via_ftp(panel_id, side="front"):
                         ftp.retrbinary(f"RETR {test_path}", f.write)
                     if local_file.exists() and local_file.stat().st_size > 0:
                         downloaded = True
+                        tp_folder = extract_el_folder_status(image_path=test_path)
+                        if tp_folder in ("OK", "NG"):
+                            _cache_el_folder_status(panel_id, tp_folder)
                         break
                     else:
                         if local_file.exists():
@@ -856,6 +936,9 @@ def fetch_el_image_via_ftp(panel_id, side="front"):
                                         ftp.retrbinary(f"RETR {remote_name}", f.write)
                                     if local_file.exists() and local_file.stat().st_size > 0:
                                         downloaded = True
+                                        sd_folder = extract_el_folder_status(image_path=sub_dir)
+                                        if sd_folder in ("OK", "NG"):
+                                            _cache_el_folder_status(panel_id, sd_folder)
                                         break
                                     else:
                                         if local_file.exists():
@@ -1057,41 +1140,41 @@ def verify_cmms_credentials(username, password):
 def prefetch_all_data_for_module(serial):
     """
     Background worker to pre-fetch SunSim, Hi-Pot, and EL camera FTP imagery as soon as a new
-    module serial arrives at conveyor CH88 or CH89 so cached telemetry responds in <1ms.
+    module serial arrives at conveyor CH88 so cached telemetry is complete before serving.
     """
     try:
         sample_num = (abs(hash(serial)) % 4) + 1
         el_image_url = f"/api/module/{serial}/el-image?side=front"
         el_sample_fallback = f"sample_el_{sample_num}.jpg"
 
-        # Store baseline telemetry immediately so /api/telemetry responds in <1ms
+        sunsim = get_sunsim_telemetry(serial)
+        hipot = get_hipot_telemetry(serial)
+        el2 = get_el2_metadata(serial)
+
+        el_source = ""
+        try:
+            img_path, source = fetch_el_image_via_ftp(serial, side="front")
+            if img_path:
+                el_source = source
+        except Exception:
+            pass
+
+        el_folder = (el2.get("folder_status") if isinstance(el2, dict) else "") or extract_el_folder_status(module_id=serial)
+
         prefetched_telemetry[serial] = {
             "module_id": serial,
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
             "el_image": el_image_url,
             "el_fallback": el_sample_fallback,
             "el_images": [el_sample_fallback],
-            "sunsim": None,
-            "sun_simulator": None,
-            "hipot": None,
+            "el_folder": el_folder,
+            "el_source": el_source,
+            "sunsim": sunsim,
+            "sun_simulator": sunsim,
+            "hipot": hipot,
+            "el2": el2,
             "cached_at": time.time()
         }
-
-        sunsim = get_sunsim_telemetry(serial)
-        hipot = get_hipot_telemetry(serial)
-        el2 = get_el2_metadata(serial)
-        prefetched_telemetry[serial]["sunsim"] = sunsim
-        prefetched_telemetry[serial]["sun_simulator"] = sunsim
-        prefetched_telemetry[serial]["hipot"] = hipot
-        prefetched_telemetry[serial]["el2"] = el2
-
-        # Background fetch FTP image without blocking initial telemetry cache
-        try:
-            img_path, source = fetch_el_image_via_ftp(serial, side="front")
-            if img_path:
-                prefetched_telemetry[serial]["el_source"] = source
-        except Exception:
-            pass
 
         print(f"[Prefetch] Pre-cached SunSim, Hi-Pot, and EL image for module {serial}")
     except Exception as e:
@@ -1291,7 +1374,8 @@ def _run_socket_mqtt_listener():
     username = CONFIG["mqtt"].get("username", "line2-equipment")
     password = CONFIG["mqtt"].get("password", "3cwDa4Lf6NZH2u")
     topics_to_sub = [
-        ("usm/cstx/prod/line2/CH88", 0)
+        ("usm/cstx/prod/line2/CH88", 0),
+        ("usm/cstx/prod/line2/#", 0)
     ]
 
     client_id = f"fvi-line2-{int(time.time()) % 100000}"
@@ -1469,6 +1553,7 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        global current_conveyor_panel, active_main_screen_module, _initial_conveyor_seeded
         parsed = urlparse(self.path)
         path = parsed.path
 
@@ -1555,7 +1640,6 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
 
         # Active Module Synchronisation Endpoint
         if path == "/api/module/active":
-            global active_main_screen_module
             mod = active_main_screen_module or current_conveyor_panel.get("panel_id") or ""
             if mod and (len(str(mod)) != 16 or not str(mod).startswith("USM")):
                 mod = ""
@@ -1567,6 +1651,20 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
 
         # 4. Get Current Conveyor Panel ID
         if path in ("/api/module/current", "/api/conveyor/current"):
+            if (not current_conveyor_panel.get("panel_id")) and (not mqtt_channel_serials.get("CH88")) and (not _initial_conveyor_seeded):
+                _initial_conveyor_seeded = True
+                latest_mod = get_latest_production_module()
+                if latest_mod and len(str(latest_mod).strip()) == 16 and str(latest_mod).strip().upper().startswith("USM"):
+                    clean_latest = str(latest_mod).strip().upper()
+                    mqtt_channel_serials["CH88"] = clean_latest
+                    current_conveyor_panel = {
+                        "panel_id": clean_latest,
+                        "channel": "CH88",
+                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "source": "MQTT CH88"
+                    }
+                    if not active_main_screen_module:
+                        active_main_screen_module = clean_latest
             self.send_json(200, {
                 "panel_id": current_conveyor_panel.get("panel_id"),
                 "channel": current_conveyor_panel.get("channel", "CH88"),
@@ -1757,28 +1855,38 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/telemetry"):
             query = parse_qs(parsed.query)
             mod_id = query.get("module_id", [None])[0] or current_conveyor_panel.get("panel_id", "")
-            
-            # Instant cache hit from MQTT background prefetch
+            force_fresh = bool(query.get("_t"))
+
+            # Instant cache hit from MQTT background prefetch (unless cache-busted or incomplete)
             cached = prefetched_telemetry.get(mod_id)
-            if cached:
+            if cached and not force_fresh and cached.get("el2") is not None:
                 self.send_json(200, cached)
                 return
 
             sunsim = get_sunsim_telemetry(mod_id)
             hipot = get_hipot_telemetry(mod_id)
             el2 = get_el2_metadata(mod_id)
-            
+            el_folder = (el2.get("folder_status") if isinstance(el2, dict) else "") or extract_el_folder_status(module_id=mod_id)
+            if not el_folder:
+                # Try resolving via FTP image fetch so folder sidecar is populated
+                try:
+                    fetch_el_image_via_ftp(mod_id, side="front")
+                    el_folder = extract_el_folder_status(module_id=mod_id)
+                except Exception:
+                    pass
+
             # EL Image for single-module reference display on Monitor 2
             sample_num = (abs(hash(mod_id)) % 4) + 1
             el_image_url = f"/api/module/{mod_id}/el-image?side=front"
             el_sample_fallback = f"sample_el_{sample_num}.jpg"
-            
+
             telemetry_data = {
                 "module_id": mod_id,
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
                 "el_image": el_image_url,
                 "el_fallback": el_sample_fallback,
                 "el_images": [el_sample_fallback],
+                "el_folder": el_folder,
                 "sunsim": sunsim,
                 "sun_simulator": sunsim,
                 "hipot": hipot,
