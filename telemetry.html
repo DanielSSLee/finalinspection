@@ -57,12 +57,18 @@
         </div>
 
         <div class="el-viewport-container" id="el-viewport-container">
-          <!-- Single Module EL Image View - 100% edge-to-edge -->
-          <div class="el-single-viewport" id="el-single-viewport">
-            <img src="sample_el_1.jpg" alt="Active Module EL Image" class="el-single-img" id="el-single-img" />
-            <div class="el-loading-overlay" id="el-loading-overlay" style="display: none;">
-              <span class="el-loading-text">Loading live EL inspection imagery...</span>
+          <!-- Top X-Axis: 1 to 24 (Left to Right, mirrored relative to main FVI stage) -->
+          <div class="el-axis-x-row" id="el-axis-x"></div>
+          <div class="el-stage-and-axis-y">
+            <!-- Single Module EL Image View - 100% edge-to-edge -->
+            <div class="el-single-viewport" id="el-single-viewport">
+              <img src="sample_el_1.jpg" alt="Active Module EL Image" class="el-single-img" id="el-single-img" />
+              <div class="el-loading-overlay" id="el-loading-overlay" style="display: none;">
+                <span class="el-loading-text">Loading live EL inspection imagery...</span>
+              </div>
             </div>
+            <!-- Right Y-Axis: A to F from bottom to top (F at top, A at bottom) -->
+            <div class="el-axis-y-col" id="el-axis-y"></div>
           </div>
         </div>
       </div>
