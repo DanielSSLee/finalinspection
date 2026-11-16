@@ -167,9 +167,9 @@ const state = {
   prefetchedCache: new Map() // serial -> { telemetry, defects }
 };
 
-// Coordinate Configuration (Bottom-Up Rows A..F, Right-to-Left Columns 1..24)
-const GRID_ROWS = ['F', 'E', 'D', 'C', 'B', 'A']; // Visual top-to-bottom order so A starts at bottom and goes up to F
-const GRID_COLS = Array.from({ length: 24 }, (_, i) => 24 - i); // Visual left-to-right order (24 down to 1) so 1 starts at right and goes left to 24
+// Coordinate Configuration (Top-Down Rows A..F, Left-to-Right Columns 1..24)
+const GRID_ROWS = ['A', 'B', 'C', 'D', 'E', 'F']; // Visual top-to-bottom order (A at top down to F)
+const GRID_COLS = Array.from({ length: 24 }, (_, i) => i + 1); // Visual left-to-right order (1 to 24)
 
 // Sound Effects Synthesizer
 const soundFx = {
@@ -429,7 +429,7 @@ function initApp() {
 }
 
 /**
- * Build Axis Labels (Columns 24–13, Spacer, Columns 12–1 & Rows F–A Bottom-Up)
+ * Build Axis Labels (Columns 1–12, Spacer, Columns 13–24 & Rows A–F Top-Down)
  */
 function buildStageAxes(side, axisXEl, axisYEl) {
   if (!axisXEl || !axisYEl) return;
@@ -438,8 +438,8 @@ function buildStageAxes(side, axisXEl, axisYEl) {
 
   const fragX = document.createDocumentFragment();
 
-  // Left 12 Columns (24 down to 13, right-to-left numbering)
-  for (let c = 24; c >= 13; c--) {
+  // Left 12 Columns (1..12, left-to-right numbering)
+  for (let c = 1; c <= 12; c++) {
     const cellX = document.createElement('div');
     cellX.className = 'axis-cell-x';
     cellX.dataset.col = c;
@@ -454,8 +454,8 @@ function buildStageAxes(side, axisXEl, axisYEl) {
   spacerX.innerHTML = '&bull;';
   fragX.appendChild(spacerX);
 
-  // Right 12 Columns (12 down to 1, right-to-left numbering)
-  for (let c = 12; c >= 1; c--) {
+  // Right 12 Columns (13..24, left-to-right numbering)
+  for (let c = 13; c <= 24; c++) {
     const cellX = document.createElement('div');
     cellX.className = 'axis-cell-x';
     cellX.dataset.col = c;
@@ -465,7 +465,7 @@ function buildStageAxes(side, axisXEl, axisYEl) {
   }
   axisXEl.appendChild(fragX);
 
-  // Y Axis (Rows F down to A so A starts at bottom and goes up)
+  // Y Axis (Rows A..F top-to-bottom)
   const fragY = document.createDocumentFragment();
   GRID_ROWS.forEach(row => {
     const cellY = document.createElement('div');

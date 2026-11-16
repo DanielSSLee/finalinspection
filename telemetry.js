@@ -165,11 +165,13 @@
     state.elZoomOriginY = -overscan + v * (100 + overscan * 2);
   }
 
+  const EL_GRID_ROWS = ['A', 'B', 'C', 'D', 'E', 'F'];
+
   function buildElAxes() {
     if (dom.elAxisX) {
       dom.elAxisX.innerHTML = '';
       const fragX = document.createDocumentFragment();
-      for (let c = 1; c <= 12; c++) {
+      for (let c = 24; c >= 13; c--) {
         const cell = document.createElement('div');
         cell.className = 'el-axis-cell-x';
         cell.dataset.col = c;
@@ -180,7 +182,7 @@
       spacer.className = 'el-axis-cell-x spacer-x';
       spacer.innerHTML = '&bull;';
       fragX.appendChild(spacer);
-      for (let c = 13; c <= 24; c++) {
+      for (let c = 12; c >= 1; c--) {
         const cell = document.createElement('div');
         cell.className = 'el-axis-cell-x';
         cell.dataset.col = c;
@@ -193,8 +195,7 @@
     if (dom.elAxisY) {
       dom.elAxisY.innerHTML = '';
       const fragY = document.createDocumentFragment();
-      const rows = ['F', 'E', 'D', 'C', 'B', 'A'];
-      rows.forEach((row) => {
+      EL_GRID_ROWS.forEach((row) => {
         const cell = document.createElement('div');
         cell.className = 'el-axis-cell-y';
         cell.dataset.row = row;
@@ -218,9 +219,8 @@
       if (rect.width > 0 && rect.height > 0) {
         const u = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
         const v = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
-        const col = Math.min(24, Math.max(1, Math.floor(u * 24) + 1));
-        const rows = ['F', 'E', 'D', 'C', 'B', 'A'];
-        const row = rows[Math.min(5, Math.max(0, Math.floor(v * 6)))];
+        const col = Math.min(24, Math.max(1, 24 - Math.floor(u * 24)));
+        const row = EL_GRID_ROWS[Math.min(5, Math.max(0, Math.floor(v * 6)))];
 
         if (dom.elAxisX) {
           const xCells = dom.elAxisX.querySelectorAll('.el-axis-cell-x[data-col]');
