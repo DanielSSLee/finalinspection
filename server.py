@@ -512,6 +512,8 @@ mqtt_channel_serials = {"CH88": None, "CH89": None}
 mqtt_queue = []  # list of {"panel_id": str, "channel": "CH88"|"CH89", "timestamp": str, "source": str}
 prefetched_telemetry = {}  # panel_id -> {"sunsim": ..., "hipot": ..., "el_image": ..., "el_fallback": ..., "cached_at": float}
 _initial_conveyor_seeded = False
+_recent_inspections_lock = threading.Lock()
+_recent_inspections = {}  # module_id -> {"grade": grade, "timestamp": float, "record_id": int, "engine": str}
 
 # Defect Code to IEC Type ID (int2)
 DEFECT_CODE_TO_ID = {
@@ -2182,6 +2184,33 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                 self.send_json(400, {"error": "Module serial must start with USM and have 16 characters (including USM)"})
                 return
 
+            # De-duplication check: Suppress duplicate submissions of identical (module_id, grade) within 15 seconds
+            now_ts = time.time()
+            with _recent_inspections_lock:
+                # Purge entries older than 60s
+                for m in list(_recent_inspections.keys()):
+                    if now_ts - _recent_inspections[m]["timestamp"] > 60:
+                        _recent_inspections.pop(m, None)
+
+                prev = _recent_inspections.get(module_id)
+                if prev and prev.get("grade") == grade and (now_ts - prev.get("timestamp", 0)) < 15.0:
+                    elapsed = now_ts - prev["timestamp"]
+                    print(f"[DB Sync] Duplicate submission suppressed for {module_id} -> Grade [{grade}] ({elapsed:.1f}s ago). Returning previous record #{prev['record_id']}")
+                    self.send_json(200, {
+                        "success": True,
+                        "record_id": prev["record_id"],
+                        "module_id": module_id,
+                        "grade": grade,
+                        "result_code": grade,
+                        "tester_name": tester_name,
+                        "duplicate_suppressed": True,
+                        "mssql_synced": True,
+                        "engine": prev["engine"],
+                        "current_panel": current_conveyor_panel,
+                        "message": f"Module {module_id} grade [{grade}] already committed ({elapsed:.1f}s ago)"
+                    })
+                    return
+
             # 1. Sync immediately to Microsoft SQL Server (dbo.Final_Inspections)
             mssql_query = """
             INSERT INTO dbo.Final_Inspections (Module_ID, Tested_At, Grade, Tester_Name)
@@ -2203,7 +2232,16 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
             dest_str = f"MSSQL ({mssql_engine})" if mssql_success else "SQLite (Local Cache)"
             print(f"[DB Sync] {action} Final_Inspections [{dest_str}]: {module_id} -> Grade [{grade}] (Code: {grade}) by {tester_name} (Local ID #{record_id})")
 
-            # 3. Advance Queue: Remove graded module from mqtt_queue if present
+            # Store in recent inspections cache for de-duplication
+            with _recent_inspections_lock:
+                _recent_inspections[module_id] = {
+                    "grade": grade,
+                    "timestamp": now_ts,
+                    "record_id": record_id,
+                    "engine": mssql_engine if mssql_success else "SQLITE_LOCAL"
+                }
+
+            # 3. Advance Queue / Reset Conveyor State
             mqtt_queue = [item for item in mqtt_queue if item.get("panel_id") != module_id]
             if mqtt_queue:
                 next_panel = mqtt_queue.pop(0)
@@ -2221,6 +2259,19 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                     "queue": mqtt_queue,
                     "timestamp": ts
                 })
+            else:
+                # Clear active conveyor state so graded module is not reloaded on page refresh
+                if current_conveyor_panel.get("panel_id") == module_id:
+                    current_conveyor_panel = {
+                        "panel_id": "",
+                        "channel": "IDLE",
+                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "source": "Graded"
+                    }
+                if mqtt_channel_serials.get("CH88") == module_id:
+                    mqtt_channel_serials["CH88"] = None
+                if active_main_screen_module == module_id:
+                    active_main_screen_module = ""
 
             self.send_json(200, {
                 "success": True,

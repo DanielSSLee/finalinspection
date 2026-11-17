@@ -161,6 +161,8 @@ const state = {
   verifyModalMode: 'ARRIVAL', // 'ARRIVAL' | 'SUBMIT'
   isSubmittingVerify: false, // guard against double-trigger from scanner Enter + input events
   isRequestInFlight: false, // guard against concurrent POST /api/inspections calls
+  recentlyGradedModule: null, // serial of last submitted module
+  recentlyGradedAt: 0, // timestamp of last submitted module (ms)
   moduleReadyForImmediateLoad: true, // true when waiting for next module
   mqttQueue: [], // unused (kept for compatibility)
   lastSeenChannelSerial: { CH88: null },
@@ -1269,6 +1271,11 @@ function handleIncomingMqttSerial(serial, channel) {
     return;
   }
 
+  // Deduplicate against module that was just graded in the last 15 seconds
+  if (state.recentlyGradedModule === cleanSerial && (Date.now() - (state.recentlyGradedAt || 0)) < 15000) {
+    return;
+  }
+
   // Do not overwrite an in-progress inspection if the inspector has already logged defects or selected a grade
   if (state.moduleId && (state.defects.size > 0 || state.grade)) {
     return;
@@ -1440,9 +1447,16 @@ function executeInspectionSubmission() {
   state.isSubmittingVerify = true;
   closeSerialVerifyModal(false);
 
+  if (dom.btnSaveInspection) {
+    dom.btnSaveInspection.disabled = true;
+  }
+
+  const currentMod = state.moduleId;
+  const currentGrade = state.grade;
+
   const payload = {
-    module_id: state.moduleId,
-    grade: state.grade,
+    module_id: currentMod,
+    grade: currentGrade,
     tester_name: (state.currentOperator && state.currentOperator.name) || 'Inspector',
     defect_count: state.defects.size
   };
@@ -1457,7 +1471,9 @@ function executeInspectionSubmission() {
   })
     .then(res => res.json())
     .then(data => {
-      showToast(`Module ${state.moduleId} graded as [${state.grade}] successfully`, 'success');
+      state.recentlyGradedModule = currentMod;
+      state.recentlyGradedAt = Date.now();
+      showToast(`Module ${currentMod} graded as [${currentGrade}] successfully`, 'success');
       soundFx.beep(950, 0.12);
 
       // Reset for next module
@@ -1465,6 +1481,8 @@ function executeInspectionSubmission() {
       fetchGradingHistory();
     })
     .catch(() => {
+      state.recentlyGradedModule = currentMod;
+      state.recentlyGradedAt = Date.now();
       showToast(`Grade submitted locally (offline mode)`, 'info');
       resetModuleAfterSubmit();
       fetchGradingHistory();
@@ -1477,6 +1495,11 @@ function resetModuleAfterSubmit() {
   resetGrade();
   recomputeAllowedGrades();
   updateSummaryAndHistory();
+
+  // Re-enable inspection submit button
+  if (dom.btnSaveInspection) {
+    dom.btnSaveInspection.disabled = false;
+  }
 
   // Reset station for next scan or CH88 arrival
   state.moduleId = '';
