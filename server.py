@@ -410,7 +410,7 @@ def get_el2_metadata(module_id):
                            AIResult, RetrialResult, Image_Path, Vis_Image, Result_File, Tester_Name
                     FROM dbo.EL2
                     WHERE Module_ID = ?
-                    ORDER BY Record_ID DESC
+                    ORDER BY Tested_At DESC, Record_ID DESC
                 """
                 if engine == "MSSQL_PYMSSQL":
                     query = query.replace("?", "%s")
@@ -798,19 +798,19 @@ def init_database():
 # ---------------------------------------------------------------------------
 # FTP Image Fetcher (Connects to EL Testing PC / FTP Server 100.100.200.223)
 # ---------------------------------------------------------------------------
-def fetch_el_image_via_ftp(panel_id, side="front"):
+def fetch_el_image_via_ftp(panel_id, side="front", force_refresh=False):
     """
-    Connects to the EL Testing PC via FTP (100.100.200.223) and downloads the module image.
-    Resolves exact path from dbo.EL2 in MSSQL PL2, with candidate transforms (p2, p1) and OK/NG folder scans.
-    Caches downloaded image locally in CACHE_DIR.
+    Connects to the EL Testing PC via FTP (100.100.200.223) and downloads the most recent module image.
+    Resolves exact path from the latest dbo.EL2 record in MSSQL PL2, with candidate transforms (p2, p1)
+    and OK/NG folder scans. Validates cached files against the latest dbo.EL2 record so reworked retakes
+    always replace older cached images.
     """
     side_normalized = "back" if str(side).lower() in ("back", "rear", "b") else "front"
     suffix = "_back" if side_normalized == "back" else ""
     local_file = CACHE_DIR / f"{panel_id}{suffix}.jpg"
-    if local_file.exists():
-        return local_file, "CACHED"
+    meta_file = CACHE_DIR / f"{panel_id}{suffix}.meta"
 
-    # 1. Query dbo.EL2 in MSSQL PL2 for exact Image_Path
+    # 1. Always check dbo.EL2 in MSSQL PL2 first for the most recent retake
     el_meta = get_el2_metadata(panel_id)
     db_image_path = None
     if el_meta.get("found"):
@@ -819,7 +819,21 @@ def fetch_el_image_via_ftp(panel_id, side="front"):
         else:
             db_image_path = el_meta.get("image_path")
 
+    current_sig = ""
+    if el_meta.get("found"):
+        current_sig = f"{el_meta.get('record_id')}|{el_meta.get('tested_at')}|{db_image_path or ''}"
+
+    # Use local disk cache only if not forced and the DB record matches the cached signature
+    if (not force_refresh) and local_file.exists() and current_sig and meta_file.exists():
+        try:
+            if meta_file.read_text(encoding="utf-8").strip() == current_sig:
+                return local_file, "CACHED"
+        except Exception:
+            pass
+
     if not CONFIG["ftp"]["enabled"]:
+        if local_file.exists():
+            return local_file, "CACHED"
         # If FTP is not physically online, fallback to local sample images
         if side_normalized == "back":
             back_sample = BASE_DIR / "sample_el_back.jpg"
@@ -848,6 +862,7 @@ def fetch_el_image_via_ftp(panel_id, side="front"):
         ftp.login(ftp_cfg["username"], ftp_cfg["password"])
 
         downloaded = False
+        tmp_file = CACHE_DIR / f"{panel_id}{suffix}.tmp.{int(time.time() * 1000)}.jpg"
 
         # If dbo.EL2 returned an Image_Path, test derived paths:
         # e.g. clean_path = '/el_ret_fujian/2026-11-11/L2_QEL003/Day/OK/el/USM0123110260015.jpg'
@@ -861,21 +876,21 @@ def fetch_el_image_via_ftp(panel_id, side="front"):
                 if not test_path:
                     continue
                 try:
-                    with open(local_file, "wb") as f:
+                    with open(tmp_file, "wb") as f:
                         ftp.retrbinary(f"RETR {test_path}", f.write)
-                    if local_file.exists() and local_file.stat().st_size > 0:
+                    if tmp_file.exists() and tmp_file.stat().st_size > 0:
                         downloaded = True
                         tp_folder = extract_el_folder_status(image_path=test_path)
                         if tp_folder in ("OK", "NG"):
                             _cache_el_folder_status(panel_id, tp_folder)
                         break
                     else:
-                        if local_file.exists():
-                            local_file.unlink()
+                        if tmp_file.exists():
+                            tmp_file.unlink()
                 except Exception:
-                    if local_file.exists():
+                    if tmp_file.exists():
                         try:
-                            local_file.unlink()
+                            tmp_file.unlink()
                         except Exception:
                             pass
 
@@ -890,18 +905,18 @@ def fetch_el_image_via_ftp(panel_id, side="front"):
                 ftp.cwd(ftp_cfg.get("remote_dir", "/"))
                 for remote_name in candidates:
                     try:
-                        with open(local_file, "wb") as f:
+                        with open(tmp_file, "wb") as f:
                             ftp.retrbinary(f"RETR {remote_name}", f.write)
-                        if local_file.exists() and local_file.stat().st_size > 0:
+                        if tmp_file.exists() and tmp_file.stat().st_size > 0:
                             downloaded = True
                             break
                         else:
-                            if local_file.exists():
-                                local_file.unlink()
+                            if tmp_file.exists():
+                                tmp_file.unlink()
                     except Exception:
-                        if local_file.exists():
+                        if tmp_file.exists():
                             try:
-                                local_file.unlink()
+                                tmp_file.unlink()
                             except Exception:
                                 pass
             except Exception:
@@ -932,21 +947,21 @@ def fetch_el_image_via_ftp(panel_id, side="front"):
                             ftp.cwd(sub_dir)
                             for remote_name in candidates:
                                 try:
-                                    with open(local_file, "wb") as f:
+                                    with open(tmp_file, "wb") as f:
                                         ftp.retrbinary(f"RETR {remote_name}", f.write)
-                                    if local_file.exists() and local_file.stat().st_size > 0:
+                                    if tmp_file.exists() and tmp_file.stat().st_size > 0:
                                         downloaded = True
                                         sd_folder = extract_el_folder_status(image_path=sub_dir)
                                         if sd_folder in ("OK", "NG"):
                                             _cache_el_folder_status(panel_id, sd_folder)
                                         break
                                     else:
-                                        if local_file.exists():
-                                            local_file.unlink()
+                                        if tmp_file.exists():
+                                            tmp_file.unlink()
                                 except Exception:
-                                    if local_file.exists():
+                                    if tmp_file.exists():
                                         try:
-                                            local_file.unlink()
+                                            tmp_file.unlink()
                                         except Exception:
                                             pass
                             if downloaded:
@@ -966,9 +981,22 @@ def fetch_el_image_via_ftp(panel_id, side="front"):
             except Exception:
                 pass
 
-        if downloaded and local_file.exists() and local_file.stat().st_size > 0:
+        if downloaded and tmp_file.exists() and tmp_file.stat().st_size > 0:
+            tmp_file.replace(local_file)
+            if current_sig:
+                try:
+                    meta_file.write_text(current_sig, encoding="utf-8")
+                except Exception:
+                    pass
             return local_file, "FTP_DOWNLOADED"
         else:
+            if tmp_file.exists():
+                try:
+                    tmp_file.unlink()
+                except Exception:
+                    pass
+            if local_file.exists() and local_file.stat().st_size > 0:
+                return local_file, "CACHED_FALLBACK"
             default_sample = BASE_DIR / ("sample_el_back.jpg" if side_normalized == "back" else "sample_el_1.jpg")
             if default_sample.exists():
                 return default_sample, "FTP_FALLBACK"
@@ -1153,7 +1181,7 @@ def prefetch_all_data_for_module(serial):
 
         el_source = ""
         try:
-            img_path, source = fetch_el_image_via_ftp(serial, side="front")
+            img_path, source = fetch_el_image_via_ftp(serial, side="front", force_refresh=True)
             if img_path:
                 el_source = source
         except Exception:
@@ -1682,9 +1710,10 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
             # URL: /api/module/{panel_id}/el-image?side=front|back
             query = parse_qs(parsed.query)
             side = query.get("side", ["front"])[0].lower()
+            force_refresh = bool(query.get("refresh"))
             parts = path.strip("/").split("/")
             panel_id = parts[2] if len(parts) >= 3 else "DEFAULT"
-            image_path, source = fetch_el_image_via_ftp(panel_id, side=side)
+            image_path, source = fetch_el_image_via_ftp(panel_id, side=side, force_refresh=force_refresh)
 
             if image_path and image_path.exists():
                 with open(image_path, "rb") as f:
@@ -1693,7 +1722,7 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "image/jpeg")
                 self.send_header("Content-Length", str(len(img_data)))
                 self.send_header("X-Image-Source", source)
-                self.send_header("Cache-Control", "public, max-age=3600")
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
                 self.wfile.write(img_data)
@@ -1857,9 +1886,9 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
             mod_id = query.get("module_id", [None])[0] or current_conveyor_panel.get("panel_id", "")
             force_fresh = bool(query.get("_t"))
 
-            # Instant cache hit from MQTT background prefetch (unless cache-busted or incomplete)
+            # Instant cache hit from MQTT background prefetch (expires after 5s so reworked modules refresh)
             cached = prefetched_telemetry.get(mod_id)
-            if cached and not force_fresh and cached.get("el2") is not None:
+            if cached and not force_fresh and cached.get("el2") is not None and (time.time() - cached.get("cached_at", 0) < 5.0):
                 self.send_json(200, cached)
                 return
 

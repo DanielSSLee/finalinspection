@@ -118,7 +118,7 @@
       return;
     }
 
-    const bustParam = forceBust ? `&_t=${Date.now()}` : '';
+    const bustParam = `&_t=${Date.now()}${forceBust ? '&refresh=1' : ''}`;
     const targetSrc = elUrl
       ? (elUrl.includes('?') ? `${elUrl}${bustParam}` : `${elUrl}?${bustParam.slice(1)}`)
       : (`/api/module/${encodeURIComponent(moduleId)}/el-image?side=front${bustParam}`);
