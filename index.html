@@ -3,10 +3,16 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0b0f19">
   <title>FVI Station 01 — Photovoltaic Final Visual Inspection Console</title>
   <meta name="description"
     content="Industrial workstation console for Photovoltaic Final Visual Inspection (FVI) on Vertical Portrait Monitor">
+  <link rel="manifest" id="app-manifest-link" href="/manifest.json">
+  <link rel="icon" type="image/svg+xml" href="/app-icon.svg">
+  <link rel="apple-touch-icon" href="/app-icon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
@@ -145,7 +151,7 @@
           </table>
           <div class="empty-history" id="empty-history-state">
             <span class="empty-title">Ready for inspection</span>
-            <span class="empty-subtitle">&mdash; Click any cell, perimeter frame bar, center busbar, or junction box on
+            <span class="empty-subtitle" id="empty-history-subtitle">&mdash; Click any cell, perimeter frame bar, center busbar, or junction box on
               the outlines below to log defects.</span>
           </div>
         </div>
@@ -153,18 +159,55 @@
         <span style="display: none;" id="summary-total-tags">0</span>
       </section>
 
+      <!-- Post-Lam Tablet Single-Screen Embedded EL1 Viewer (Only displayed in Post-Lam Mode) -->
+      <section class="module-outline-card postlam-el-card" id="card-postlam-el" style="display: none;">
+        <div class="outline-card-header">
+          <div class="card-title-group">
+            <span class="side-indicator-tag tag-el">EL1 INSPECTION IMAGE</span>
+            <span class="el-folder-badge" id="postlam-el-folder-badge" title="EL1 Image Folder Status (OK / NG)">--</span>
+            <span class="el-machine-badge" id="postlam-el-machine-badge" title="EL Camera Machine (L2_QEL001 / L2_QEL002)">EL1</span>
+            <span class="card-subtitle">Pinch or scroll to zoom &bull; Drag to pan &bull; Double-tap to reset</span>
+          </div>
+          <div class="card-legend postlam-el-actions">
+            <button type="button" class="el-zoom-badge" id="btn-postlam-reset-zoom" style="display: none;">1.0x Reset</button>
+            <button type="button" class="btn-history-refresh" id="btn-postlam-refresh-el" title="Force re-fetch EL1 image from both machines">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <polyline points="1 20 1 14 7 14"></polyline>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+              </svg>
+              <span>Refresh EL</span>
+            </button>
+            <button type="button" class="btn-history-refresh" id="btn-postlam-toggle-el" title="Collapse or expand EL1 image viewer">Hide Image</button>
+          </div>
+        </div>
+
+        <div class="postlam-el-body" id="postlam-el-body">
+          <div class="postlam-el-axis-x" id="postlam-el-axis-x"></div>
+          <div class="postlam-el-stage-and-y">
+            <div class="postlam-el-viewport" id="postlam-el-viewport">
+              <img src="sample_el_1.jpg" alt="Active Module EL1 Image" class="postlam-el-img" id="postlam-el-img" draggable="false">
+              <div class="postlam-el-loading" id="postlam-el-loading" style="display: none;">
+                <span>Fetching EL1 image...</span>
+              </div>
+            </div>
+            <div class="postlam-el-axis-y" id="postlam-el-axis-y"></div>
+          </div>
+        </div>
+      </section>
+
       <!-- Section 2: FRONT MODULE OUTLINE (pv-module-front-outline.png) -->
       <section class="module-outline-card front-card" id="card-front-outline">
         <div class="outline-card-header">
           <div class="card-title-group">
             <span class="side-indicator-tag tag-front">FRONT SIDE OUTLINE</span>
-            <span class="card-subtitle">24&times;6 Silicon Matrix (144 Cells: A1&ndash;F24) &bull; Center Busbar (BBAR)
+            <span class="card-subtitle" id="front-card-subtitle">24&times;6 Silicon Matrix (144 Cells: A1&ndash;F24) &bull; Center Busbar (BBAR)
               &bull; Uniform Outer Frame (FRAME)</span>
           </div>
           <div class="card-legend">
             <span class="legend-item"><span class="legend-swatch swatch-cell"></span> Cell Matrix (A1&ndash;F24)</span>
             <span class="legend-item"><span class="legend-swatch swatch-busbar"></span> Center Busbar (BBAR)</span>
-            <span class="legend-item"><span class="legend-swatch swatch-frame"></span> Outer Frame (FRAME)</span>
+            <span class="legend-item legend-frame"><span class="legend-swatch swatch-frame"></span> Outer Frame (FRAME)</span>
           </div>
         </div>
 
@@ -212,13 +255,13 @@
         <div class="outline-card-header">
           <div class="card-title-group">
             <span class="side-indicator-tag tag-back">BACK SIDE OUTLINE</span>
-            <span class="card-subtitle">24&times;6 Grid &bull; Backsheet &bull; 3 Function Boxes (JBX1 Top &bull; JBX2
+            <span class="card-subtitle" id="back-card-subtitle">24&times;6 Grid &bull; Backsheet &bull; 3 Function Boxes (JBX1 Top &bull; JBX2
               Mid &bull; JBX3 Bot) &bull; Uniform Outer Frame (FRAME)</span>
           </div>
           <div class="card-legend">
-            <span class="legend-item"><span class="legend-swatch swatch-jbox"></span> Function Box (JBX1/2/3)</span>
+            <span class="legend-item legend-jbox"><span class="legend-swatch swatch-jbox"></span> Function Box (JBX1/2/3)</span>
             <span class="legend-item"><span class="legend-swatch swatch-backsheet"></span> Backsheet / Cell Grid</span>
-            <span class="legend-item"><span class="legend-swatch swatch-frame"></span> Outer Frame (FRAME)</span>
+            <span class="legend-item legend-frame"><span class="legend-swatch swatch-frame"></span> Outer Frame (FRAME)</span>
           </div>
         </div>
 

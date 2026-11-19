@@ -145,6 +145,7 @@ const DEFECT_CATALOG = {
 
 // Application State
 const state = {
+  stationMode: 'fvi', // 'fvi' | 'postlam' (locked via URL route / server config; no UI toggle)
   moduleId: '', // 16-char photovoltaic module serial number starting with USM
   grade: null, // null | 'A' | 'B' | 'R' | 'X'
   allowedGrades: ['A', 'B', 'R', 'X'],
@@ -313,6 +314,21 @@ const dom = {
   btnVerifyConfirm: document.getElementById('btn-verify-confirm'),
   btnCloseVerifyModal: document.getElementById('btn-close-verify-modal'),
 
+  // Post-Lam Tablet Embedded EL1 Viewer
+  appManifestLink: document.getElementById('app-manifest-link'),
+  postlamElCard: document.getElementById('card-postlam-el'),
+  postlamElBody: document.getElementById('postlam-el-body'),
+  postlamElViewport: document.getElementById('postlam-el-viewport'),
+  postlamElImg: document.getElementById('postlam-el-img'),
+  postlamElAxisX: document.getElementById('postlam-el-axis-x'),
+  postlamElAxisY: document.getElementById('postlam-el-axis-y'),
+  postlamElFolderBadge: document.getElementById('postlam-el-folder-badge'),
+  postlamElMachineBadge: document.getElementById('postlam-el-machine-badge'),
+  postlamElLoading: document.getElementById('postlam-el-loading'),
+  btnPostlamRefreshEl: document.getElementById('btn-postlam-refresh-el'),
+  btnPostlamToggleEl: document.getElementById('btn-postlam-toggle-el'),
+  btnPostlamResetZoom: document.getElementById('btn-postlam-reset-zoom'),
+
   toastContainer: document.getElementById('toast-container')
 };
 
@@ -331,31 +347,351 @@ try {
   console.warn('[BroadcastChannel] fvi_station_sync not supported');
 }
 
+function detectStationMode() {
+  const locked = String((typeof window !== 'undefined' && window.__LOCKED_STATION_MODE__) || '').trim().toLowerCase();
+  if (locked === 'postlam' || locked === 'post_lam' || locked === 'pl') {
+    state.stationMode = 'postlam';
+    return state.stationMode;
+  }
+  const pathLower = (typeof window !== 'undefined' && window.location && window.location.pathname || '').toLowerCase();
+  if (pathLower === '/postlam' || pathLower.startsWith('/postlam/')) {
+    state.stationMode = 'postlam';
+    return state.stationMode;
+  }
+  const urlParams = new URLSearchParams(window.location.search);
+  const qStation = String(urlParams.get('station') || urlParams.get('mode') || '').trim().toLowerCase();
+  if (qStation === 'postlam' || qStation === 'post_lam' || qStation === 'pl') {
+    state.stationMode = 'postlam';
+  } else {
+    state.stationMode = 'fvi';
+  }
+  return state.stationMode;
+}
+
+function applyStationModeUI() {
+  const isPostLam = state.stationMode === 'postlam';
+  document.body.classList.toggle('station-postlam', isPostLam);
+  if (dom.appManifestLink) {
+    dom.appManifestLink.href = isPostLam ? '/postlam/manifest.json' : '/manifest.json';
+  }
+  if (isPostLam) {
+    document.title = 'Post-Lam Station — Photovoltaic Post-Lamination Visual Inspection Console';
+    const frontSub = document.getElementById('front-card-subtitle');
+    if (frontSub) {
+      frontSub.textContent = '24\u00d76 Silicon Matrix (144 Cells: A1\u2013F24) \u2022 Center Busbar (BBAR)';
+    }
+    const backSub = document.getElementById('back-card-subtitle');
+    if (backSub) {
+      backSub.textContent = '24\u00d76 Grid \u2022 Backsheet';
+    }
+    const emptySub = document.getElementById('empty-history-subtitle');
+    if (emptySub) {
+      emptySub.textContent = '\u2014 Click any cell or center busbar on the outlines below to log defects.';
+    }
+    if (dom.mqttQueuePill) {
+      dom.mqttQueuePill.title = 'Locked Station Mode: Post-Lam Visual Inspection';
+    }
+    buildPostLamElAxes();
+    initPostLamElViewer();
+    updatePostLamElImage(null);
+  }
+}
+
+const postLamElZoom = {
+  scale: 1,
+  originX: 50,
+  originY: 50,
+  pinchStartDist: 0,
+  pinchStartScale: 1,
+  panActive: false,
+  panLastX: 0,
+  panLastY: 0,
+  lastTapAt: 0,
+  initialized: false
+};
+
+function buildPostLamElAxes() {
+  if (dom.postlamElAxisX) {
+    dom.postlamElAxisX.innerHTML = '';
+    const fragX = document.createDocumentFragment();
+    for (let c = 24; c >= 13; c--) {
+      const cell = document.createElement('div');
+      cell.className = 'postlam-el-axis-cell-x';
+      cell.dataset.col = c;
+      cell.textContent = c;
+      fragX.appendChild(cell);
+    }
+    const spacer = document.createElement('div');
+    spacer.className = 'postlam-el-axis-cell-x spacer-x';
+    spacer.innerHTML = '&bull;';
+    fragX.appendChild(spacer);
+    for (let c = 12; c >= 1; c--) {
+      const cell = document.createElement('div');
+      cell.className = 'postlam-el-axis-cell-x';
+      cell.dataset.col = c;
+      cell.textContent = c;
+      fragX.appendChild(cell);
+    }
+    dom.postlamElAxisX.appendChild(fragX);
+  }
+
+  if (dom.postlamElAxisY) {
+    dom.postlamElAxisY.innerHTML = '';
+    const fragY = document.createDocumentFragment();
+    GRID_ROWS.forEach((row) => {
+      const cell = document.createElement('div');
+      cell.className = 'postlam-el-axis-cell-y';
+      cell.dataset.row = row;
+      cell.textContent = row;
+      fragY.appendChild(cell);
+    });
+    dom.postlamElAxisY.appendChild(fragY);
+  }
+}
+
+function applyPostLamElTransform() {
+  if (!dom.postlamElImg) return;
+  dom.postlamElImg.style.transformOrigin = `${postLamElZoom.originX}% ${postLamElZoom.originY}%`;
+  dom.postlamElImg.style.transform = postLamElZoom.scale > 1 ? `scale(${postLamElZoom.scale})` : 'scale(1)';
+  if (dom.postlamElViewport) {
+    dom.postlamElViewport.classList.toggle('is-zoomed', postLamElZoom.scale > 1);
+  }
+  if (dom.btnPostlamResetZoom) {
+    if (postLamElZoom.scale > 1) {
+      const label = postLamElZoom.scale.toFixed(2).replace(/\.00$/, '.0').replace(/(\.\d)0$/, '$1');
+      dom.btnPostlamResetZoom.textContent = `${label}x Reset`;
+      dom.btnPostlamResetZoom.style.display = 'inline-flex';
+    } else {
+      dom.btnPostlamResetZoom.style.display = 'none';
+    }
+  }
+}
+
+function resetPostLamElZoom() {
+  postLamElZoom.scale = 1;
+  postLamElZoom.originX = 50;
+  postLamElZoom.originY = 50;
+  applyPostLamElTransform();
+}
+
+function setPostLamOriginFromPoint(clientX, clientY) {
+  if (!dom.postlamElViewport) return;
+  const rect = dom.postlamElViewport.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const u = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  const v = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+  const overscan = 18;
+  postLamElZoom.originX = -overscan + u * (100 + overscan * 2);
+  postLamElZoom.originY = -overscan + v * (100 + overscan * 2);
+}
+
+function initPostLamElViewer() {
+  if (postLamElZoom.initialized || !dom.postlamElViewport) return;
+  postLamElZoom.initialized = true;
+
+  const vp = dom.postlamElViewport;
+
+  vp.addEventListener('mousemove', (e) => {
+    setPostLamOriginFromPoint(e.clientX, e.clientY);
+    if (postLamElZoom.scale > 1) {
+      applyPostLamElTransform();
+    }
+    const rect = vp.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      const u = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const v = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+      const col = Math.min(24, Math.max(1, 24 - Math.floor(u * 24)));
+      const row = GRID_ROWS[Math.min(5, Math.max(0, Math.floor(v * 6)))];
+      if (dom.postlamElAxisX) {
+        dom.postlamElAxisX.querySelectorAll('.postlam-el-axis-cell-x[data-col]').forEach((c) => {
+          c.classList.toggle('highlight', c.dataset.col === String(col));
+        });
+      }
+      if (dom.postlamElAxisY) {
+        dom.postlamElAxisY.querySelectorAll('.postlam-el-axis-cell-y[data-row]').forEach((r) => {
+          r.classList.toggle('highlight', r.dataset.row === row);
+        });
+      }
+    }
+  });
+
+  vp.addEventListener('mouseleave', () => {
+    if (dom.postlamElAxisX) {
+      dom.postlamElAxisX.querySelectorAll('.highlight').forEach((el) => el.classList.remove('highlight'));
+    }
+    if (dom.postlamElAxisY) {
+      dom.postlamElAxisY.querySelectorAll('.highlight').forEach((el) => el.classList.remove('highlight'));
+    }
+  });
+
+  vp.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    setPostLamOriginFromPoint(e.clientX, e.clientY);
+    const delta = e.deltaY < 0 ? 0.25 : -0.25;
+    postLamElZoom.scale = Math.round(Math.max(1.0, Math.min(6.0, postLamElZoom.scale + delta)) * 100) / 100;
+    applyPostLamElTransform();
+  }, { passive: false });
+
+  vp.addEventListener('dblclick', () => resetPostLamElZoom());
+
+  // Touch pinch-to-zoom & single-finger pan for Android Tablets
+  const getTouchDist = (t1, t2) => Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+
+  vp.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      postLamElZoom.pinchStartDist = getTouchDist(e.touches[0], e.touches[1]);
+      postLamElZoom.pinchStartScale = postLamElZoom.scale;
+      const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      setPostLamOriginFromPoint(midX, midY);
+    } else if (e.touches.length === 1) {
+      const now = Date.now();
+      if (now - postLamElZoom.lastTapAt < 280) {
+        e.preventDefault();
+        resetPostLamElZoom();
+        postLamElZoom.lastTapAt = 0;
+        return;
+      }
+      postLamElZoom.lastTapAt = now;
+      if (postLamElZoom.scale > 1) {
+        postLamElZoom.panActive = true;
+        postLamElZoom.panLastX = e.touches[0].clientX;
+        postLamElZoom.panLastY = e.touches[0].clientY;
+      }
+    }
+  }, { passive: false });
+
+  vp.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 2 && postLamElZoom.pinchStartDist > 0) {
+      e.preventDefault();
+      const dist = getTouchDist(e.touches[0], e.touches[1]);
+      const ratio = dist / postLamElZoom.pinchStartDist;
+      postLamElZoom.scale = Math.round(Math.max(1.0, Math.min(6.0, postLamElZoom.pinchStartScale * ratio)) * 100) / 100;
+      const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      setPostLamOriginFromPoint(midX, midY);
+      applyPostLamElTransform();
+    } else if (e.touches.length === 1 && postLamElZoom.panActive && postLamElZoom.scale > 1) {
+      e.preventDefault();
+      const rect = vp.getBoundingClientRect();
+      const dx = e.touches[0].clientX - postLamElZoom.panLastX;
+      const dy = e.touches[0].clientY - postLamElZoom.panLastY;
+      postLamElZoom.panLastX = e.touches[0].clientX;
+      postLamElZoom.panLastY = e.touches[0].clientY;
+      if (rect.width > 0 && rect.height > 0) {
+        postLamElZoom.originX = Math.max(-18, Math.min(118, postLamElZoom.originX - (dx / rect.width) * 100));
+        postLamElZoom.originY = Math.max(-18, Math.min(118, postLamElZoom.originY - (dy / rect.height) * 100));
+        applyPostLamElTransform();
+      }
+    }
+  }, { passive: false });
+
+  vp.addEventListener('touchend', (e) => {
+    if (e.touches.length < 2) postLamElZoom.pinchStartDist = 0;
+    if (e.touches.length === 0) postLamElZoom.panActive = false;
+  });
+
+  if (dom.btnPostlamResetZoom) {
+    dom.btnPostlamResetZoom.addEventListener('click', resetPostLamElZoom);
+  }
+  if (dom.btnPostlamRefreshEl) {
+    dom.btnPostlamRefreshEl.addEventListener('click', () => {
+      updatePostLamElImage(state.moduleId || null, true);
+      showToast('Re-fetching EL1 image from camera PCs...', 'info');
+    });
+  }
+  if (dom.btnPostlamToggleEl && dom.postlamElBody) {
+    dom.btnPostlamToggleEl.addEventListener('click', () => {
+      const hidden = dom.postlamElBody.style.display === 'none';
+      dom.postlamElBody.style.display = hidden ? 'flex' : 'none';
+      dom.btnPostlamToggleEl.textContent = hidden ? 'Hide Image' : 'Show Image';
+    });
+  }
+}
+
+function renderPostLamElBadges(elData) {
+  if (dom.postlamElFolderBadge) {
+    const status = String((elData && elData.folder_status) || '').trim().toUpperCase();
+    if (status === 'OK') {
+      dom.postlamElFolderBadge.textContent = 'OK';
+      dom.postlamElFolderBadge.className = 'el-folder-badge ok';
+    } else if (status === 'NG') {
+      dom.postlamElFolderBadge.textContent = 'NG';
+      dom.postlamElFolderBadge.className = 'el-folder-badge ng';
+    } else {
+      dom.postlamElFolderBadge.textContent = '--';
+      dom.postlamElFolderBadge.className = 'el-folder-badge';
+    }
+  }
+  if (dom.postlamElMachineBadge) {
+    const machine = (elData && elData.el_machine) || 'EL1';
+    dom.postlamElMachineBadge.textContent = machine;
+  }
+}
+
+function updatePostLamElImage(moduleId, forceBust = false) {
+  if (state.stationMode !== 'postlam' || !dom.postlamElImg) return;
+  resetPostLamElZoom();
+
+  const cleanMod = String(moduleId || '').trim().toUpperCase();
+  if (!cleanMod || cleanMod.length !== 16 || !cleanMod.startsWith('USM')) {
+    if (dom.postlamElLoading) dom.postlamElLoading.style.display = 'none';
+    dom.postlamElImg.onerror = null;
+    dom.postlamElImg.src = 'sample_el_1.jpg';
+    renderPostLamElBadges(null);
+    return;
+  }
+
+  if (dom.postlamElLoading) dom.postlamElLoading.style.display = 'flex';
+  const bustParam = `&_t=${Date.now()}${forceBust ? '&refresh=1' : ''}`;
+  const targetUrl = `${config.apiBaseUrl}/api/module/${encodeURIComponent(cleanMod)}/el-image?side=front&station=postlam${bustParam}`;
+
+  dom.postlamElImg.onload = () => {
+    if (dom.postlamElLoading) dom.postlamElLoading.style.display = 'none';
+  };
+  dom.postlamElImg.onerror = () => {
+    if (dom.postlamElLoading) dom.postlamElLoading.style.display = 'none';
+    dom.postlamElImg.onerror = null;
+    dom.postlamElImg.src = 'sample_el_1.jpg';
+  };
+  dom.postlamElImg.src = targetUrl;
+
+  fetch(`${config.apiBaseUrl}/api/telemetry/el1?module_id=${encodeURIComponent(cleanMod)}`)
+    .then((r) => (r.ok ? r.json() : null))
+    .then((elData) => {
+      if (state.moduleId === cleanMod && elData) {
+        renderPostLamElBadges(elData);
+      }
+    })
+    .catch(() => { });
+}
+
 function broadcastModuleChange(modId) {
   const clean = (modId || '').trim().toUpperCase();
   if (clean.length !== 16 || !clean.startsWith('USM')) return;
 
+  const storageKey = state.stationMode === 'postlam' ? 'fvi_active_module_id_postlam' : 'fvi_active_module_id';
   try {
-    localStorage.setItem('fvi_active_module_id', clean);
+    localStorage.setItem(storageKey, clean);
   } catch (e) { }
+
+  const payload = {
+    type: 'MODULE_CHANGED',
+    moduleId: clean,
+    station: state.stationMode,
+    timestamp: Date.now()
+  };
 
   if (dualScreenSyncChannel) {
     try {
-      dualScreenSyncChannel.postMessage({
-        type: 'MODULE_CHANGED',
-        moduleId: clean,
-        timestamp: Date.now()
-      });
+      dualScreenSyncChannel.postMessage(payload);
     } catch (e) { }
   }
 
   if (stationSyncChannel) {
     try {
-      stationSyncChannel.postMessage({
-        type: 'MODULE_CHANGED',
-        moduleId: clean,
-        timestamp: Date.now()
-      });
+      stationSyncChannel.postMessage(payload);
     } catch (e) { }
   }
 
@@ -363,7 +699,11 @@ function broadcastModuleChange(modId) {
     fetch(`${config.apiBaseUrl}/api/module/active`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ module_id: clean, channel: state.activeChannel || 'MANUAL' })
+      body: JSON.stringify({
+        module_id: clean,
+        channel: state.activeChannel || 'MANUAL',
+        station: state.stationMode
+      })
     }).catch(() => { });
   } catch (e) { }
 }
@@ -376,6 +716,9 @@ const stagePinSlotsMap = new Map(); // key: `${side}:${locCode}` -> HTMLElement
  * Initialize Application
  */
 function initApp() {
+  detectStationMode();
+  applyStationModeUI();
+
   buildStageAxes('front', dom.axisXFront, dom.axisYFront);
   buildStageAxes('back', dom.axisXBack, dom.axisYBack);
 
@@ -416,7 +759,11 @@ function initApp() {
     state.isManualScan = false;
     state.moduleReadyForImmediateLoad = true;
     if (dom.moduleIdInput) dom.moduleIdInput.value = '';
-    if (dom.summaryModuleId) dom.summaryModuleId.textContent = 'Scan Barcode or Waiting for MQTT...';
+    if (dom.summaryModuleId) {
+      dom.summaryModuleId.textContent = state.stationMode === 'postlam'
+        ? 'Scan Barcode for Post-Lam...'
+        : 'Scan Barcode or Waiting for MQTT...';
+    }
     if (state.currentOperator && dom.moduleIdInput) {
       setTimeout(() => { dom.moduleIdInput.focus(); }, 100);
     }
@@ -428,6 +775,11 @@ function initApp() {
   setInterval(() => {
     fetchGradingHistory();
   }, 10000);
+
+  // Register PWA Service Worker (network-first so server/repo updates reach tablets immediately)
+  if ('serviceWorker' in navigator && (window.location.protocol === 'https:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => { });
+  }
 }
 
 /**
@@ -533,26 +885,30 @@ function buildStageGrid(side, gridEl, pinsLayerEl) {
  * Wire interactive regions: Cells, Uniform Outer Frame, Center Busbar, Function Boxes
  */
 function wireInteractiveRegions() {
-  // 1. Uniform Frame on both stages
-  document.querySelectorAll('.uniform-frame-zone').forEach(frameZone => {
-    const side = frameZone.dataset.side;
-    const loc = frameZone.dataset.loc || 'FRM';
-    const pinContainer = frameZone.querySelector('.frame-pin-container');
-    if (pinContainer) {
-      stagePinSlotsMap.set(`${side}:${loc}`, pinContainer);
-      stagePinSlotsMap.set(`${side}:FRAME`, pinContainer);
-      stagePinSlotsMap.set(`${side}:FRMT`, pinContainer);
-      stagePinSlotsMap.set(`${side}:FRMB`, pinContainer);
-      stagePinSlotsMap.set(`${side}:FRML`, pinContainer);
-      stagePinSlotsMap.set(`${side}:FRMR`, pinContainer);
-    }
-    frameZone.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openComicBubble(loc, side, frameZone.dataset.locType || `${side}_frame`, frameZone);
+  const isPostLam = state.stationMode === 'postlam';
+
+  // 1. Uniform Frame on both stages (disabled in Post-Lam mode)
+  if (!isPostLam) {
+    document.querySelectorAll('.uniform-frame-zone').forEach(frameZone => {
+      const side = frameZone.dataset.side;
+      const loc = frameZone.dataset.loc || 'FRM';
+      const pinContainer = frameZone.querySelector('.frame-pin-container');
+      if (pinContainer) {
+        stagePinSlotsMap.set(`${side}:${loc}`, pinContainer);
+        stagePinSlotsMap.set(`${side}:FRAME`, pinContainer);
+        stagePinSlotsMap.set(`${side}:FRMT`, pinContainer);
+        stagePinSlotsMap.set(`${side}:FRMB`, pinContainer);
+        stagePinSlotsMap.set(`${side}:FRML`, pinContainer);
+        stagePinSlotsMap.set(`${side}:FRMR`, pinContainer);
+      }
+      frameZone.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openComicBubble(loc, side, frameZone.dataset.locType || `${side}_frame`, frameZone);
+      });
+      frameZone.addEventListener('mouseenter', () => showTooltip(loc, side, `${side.toUpperCase()} Outer Frame (FRAME)`, frameZone));
+      frameZone.addEventListener('mouseleave', hideTooltip);
     });
-    frameZone.addEventListener('mouseenter', () => showTooltip(loc, side, `${side.toUpperCase()} Outer Frame (FRAME)`, frameZone));
-    frameZone.addEventListener('mouseleave', hideTooltip);
-  });
+  }
 
   // 2. Center Busbar (Front Stage)
   const busbar = document.getElementById('front-center-busbar');
@@ -569,21 +925,23 @@ function wireInteractiveRegions() {
     busbar.addEventListener('mouseleave', hideTooltip);
   }
 
-  // 3. Three Function / Junction Boxes (Back Stage)
-  document.querySelectorAll('.jbox-zone').forEach(jbox => {
-    const side = 'back';
-    const loc = jbox.dataset.loc;
-    const pinContainer = jbox.querySelector('.frame-pin-container');
-    if (pinContainer) {
-      stagePinSlotsMap.set(`back:${loc}`, pinContainer);
-    }
-    jbox.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openComicBubble(loc, side, 'back_jbox', jbox);
+  // 3. Three Function / Junction Boxes (Back Stage — disabled in Post-Lam mode)
+  if (!isPostLam) {
+    document.querySelectorAll('.jbox-zone').forEach(jbox => {
+      const side = 'back';
+      const loc = jbox.dataset.loc;
+      const pinContainer = jbox.querySelector('.frame-pin-container');
+      if (pinContainer) {
+        stagePinSlotsMap.set(`back:${loc}`, pinContainer);
+      }
+      jbox.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openComicBubble(loc, side, 'back_jbox', jbox);
+      });
+      jbox.addEventListener('mouseenter', () => showTooltip(loc, side, jbox.title, jbox));
+      jbox.addEventListener('mouseleave', hideTooltip);
     });
-    jbox.addEventListener('mouseenter', () => showTooltip(loc, side, jbox.title, jbox));
-    jbox.addEventListener('mouseleave', hideTooltip);
-  });
+  }
 
   // 4. Grid Cells on both stages
   document.querySelectorAll('.grid-cell').forEach(cell => {
@@ -683,6 +1041,13 @@ function formatLocationTitle(locCode, side, locType) {
 }
 
 function openComicBubble(locCode, side, locType, targetEl) {
+  if (
+    state.stationMode === 'postlam' &&
+    (['front_frame', 'back_frame', 'back_jbox'].includes(locType) ||
+      ['FRM', 'FRAME', 'FRMT', 'FRMB', 'FRML', 'FRMR', 'JBX1', 'JBX2', 'JBX3'].includes(String(locCode || '').toUpperCase()))
+  ) {
+    return;
+  }
   const preset = LOCATION_DEFECT_PRESETS[locType] || LOCATION_DEFECT_PRESETS.front_cell;
   state.activeLocation = { locCode, side, locType, targetEl };
 
@@ -793,6 +1158,10 @@ function renderReasonsList() {
   const frag = document.createDocumentFragment();
 
   const entries = Object.values(DEFECT_CATALOG).filter(def => {
+    // Post-Lam mode does not use Frame or Junction Box defects
+    if (state.stationMode === 'postlam' && (def.category === 'Frame' || def.category === 'Junction Box')) {
+      return false;
+    }
     // Category match
     if (currentCategory !== 'ALL' && def.category !== currentCategory) return false;
     // Search query match
@@ -961,6 +1330,7 @@ function removeDefect(locCode, side) {
  */
 function persistDefectToDatabase(defect) {
   const payload = {
+    station: state.stationMode,
     module_id: (state.moduleId || '').slice(0, 16),
     defect_location: defect.coord,
     defect_cell: defect.coord,
@@ -998,6 +1368,7 @@ function deleteDefectFromDatabase(locCode, side) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
+      station: state.stationMode,
       module_id: state.moduleId,
       defect_cell: locCode,
       defect_location: locCode,
@@ -1227,15 +1598,16 @@ function prefetchModuleData(serial) {
 
   const entry = { telemetry: null, defects: null, prefetchedAt: Date.now() };
   state.prefetchedCache.set(cleanMod, entry);
+  const stParam = `station=${encodeURIComponent(state.stationMode)}`;
 
-  fetch(`${config.apiBaseUrl}/api/telemetry?module_id=${encodeURIComponent(cleanMod)}`)
+  fetch(`${config.apiBaseUrl}/api/telemetry?module_id=${encodeURIComponent(cleanMod)}&${stParam}`)
     .then(r => r.ok ? r.json() : null)
     .then(data => {
       if (data) entry.telemetry = data;
     })
     .catch(() => { });
 
-  fetch(`${config.apiBaseUrl}/api/defects?module_id=${encodeURIComponent(cleanMod)}`)
+  fetch(`${config.apiBaseUrl}/api/defects?module_id=${encodeURIComponent(cleanMod)}&${stParam}`)
     .then(r => r.ok ? r.json() : null)
     .then(data => {
       if (data) entry.defects = data;
@@ -1248,7 +1620,7 @@ function prefetchModuleData(serial) {
  */
 function updateQueueDisplay() {
   if (!dom.mqttQueuePill) return;
-  const activeChan = state.activeChannel || 'CH88';
+  const activeChan = state.stationMode === 'postlam' ? 'POST-LAM' : (state.activeChannel || 'CH88');
 
   if (dom.queueChannelBadge) {
     dom.queueChannelBadge.textContent = activeChan;
@@ -1260,6 +1632,7 @@ function updateQueueDisplay() {
  * Handle Real-Time MQTT Panel Serial Updates (CH88)
  */
 function handleIncomingMqttSerial(serial, channel) {
+  if (state.stationMode === 'postlam') return;
   if (!serial) return;
   if (channel && channel.toUpperCase() !== 'CH88' && channel.toUpperCase() !== 'MQTT') return;
 
@@ -1455,6 +1828,7 @@ function executeInspectionSubmission() {
   const currentGrade = state.grade;
 
   const payload = {
+    station: state.stationMode,
     module_id: currentMod,
     grade: currentGrade,
     tester_name: (state.currentOperator && state.currentOperator.name) || 'Inspector',
@@ -1501,9 +1875,9 @@ function resetModuleAfterSubmit() {
     dom.btnSaveInspection.disabled = false;
   }
 
-  // Reset station for next scan or CH88 arrival
+  // Reset station for next scan or arrival
   state.moduleId = '';
-  state.activeChannel = 'CH88';
+  state.activeChannel = state.stationMode === 'postlam' ? 'POST-LAM' : 'CH88';
   state.isManualScan = false;
   state.isSerialVerified = false;
   state.isSubmittingVerify = false;
@@ -1514,9 +1888,12 @@ function resetModuleAfterSubmit() {
     dom.moduleIdInput.focus();
   }
   if (dom.summaryModuleId) {
-    dom.summaryModuleId.textContent = 'Scan Barcode or Waiting for CH88...';
+    dom.summaryModuleId.textContent = state.stationMode === 'postlam'
+      ? 'Scan Barcode for Post-Lam...'
+      : 'Scan Barcode or Waiting for CH88...';
   }
   updateQueueDisplay();
+  updatePostLamElImage(null);
 }
 
 /**
@@ -1550,6 +1927,9 @@ function loadModule(serial, channel = 'MANUAL', loadHistoryDefects = false) {
 
   updateQueueDisplay();
 
+  // Update embedded EL1 viewer in Post-Lam tablet mode
+  updatePostLamElImage(cleanMod);
+
   // Broadcast to Screen 2
   broadcastModuleChange(cleanMod);
 
@@ -1578,7 +1958,7 @@ function loadModule(serial, channel = 'MANUAL', loadHistoryDefects = false) {
 function fetchModuleDefects(moduleId) {
   if (!moduleId) return;
 
-  fetch(`${config.apiBaseUrl}/api/defects?module_id=${encodeURIComponent(moduleId)}`)
+  fetch(`${config.apiBaseUrl}/api/defects?module_id=${encodeURIComponent(moduleId)}&station=${encodeURIComponent(state.stationMode)}`)
     .then(res => res.json())
     .then(data => {
       const entry = state.prefetchedCache.get(moduleId) || {};
@@ -1639,7 +2019,7 @@ function applyDefectsData(data) {
  * Fetch & Render Grading History
  */
 function fetchGradingHistory() {
-  fetch(`${config.apiBaseUrl}/api/inspections?limit=50`)
+  fetch(`${config.apiBaseUrl}/api/inspections?limit=50&station=${encodeURIComponent(state.stationMode)}`)
     .then(res => res.json())
     .then(data => {
       const records = data.records || data.inspection || [];
@@ -2075,7 +2455,7 @@ function loginCMMS(name) {
     name: name,
     username: name.toLowerCase().replace(/\s+/g, '.'),
     role: 'Quality Inspector',
-    department: 'Final Inspection Station 01'
+    department: state.stationMode === 'postlam' ? 'Post-Lam Visual Inspection' : 'Final Inspection Station 01'
   };
   try {
     localStorage.setItem('fvi_cmms_operator', JSON.stringify(state.currentOperator));
@@ -2133,7 +2513,7 @@ function updateOperatorDisplay() {
  * Backend Connectivity & Conveyor SSE
  */
 function checkBackendHealth() {
-  fetch(`${config.apiBaseUrl}/api/health`)
+  fetch(`${config.apiBaseUrl}/api/health?station=${encodeURIComponent(state.stationMode)}`)
     .then(res => res.json())
     .then(data => {
       state.isServerOnline = true;
@@ -2148,6 +2528,11 @@ function checkBackendHealth() {
 }
 
 function initConveyorEventStream() {
+  // Post-Lam inspection sits mid-line and must not be overwritten by downstream FVI CH88 conveyor arrivals
+  if (state.stationMode === 'postlam') {
+    return;
+  }
+
   const handleEventData = (rawData) => {
     try {
       const data = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;

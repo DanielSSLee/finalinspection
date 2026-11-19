@@ -148,8 +148,44 @@ Running with Docker ensures complete isolation, correct dependencies, and automa
 
 5. **Open in browser**:
    - **Main FVI Console**: [http://localhost:8080](http://localhost:8080)
+   - **FVI Second Monitor (EL2 / SunSim / Hi-Pot)**: [http://localhost:8080/second](http://localhost:8080/second)
+   - **Post-Lam Console (Locked Mode — Desktop / Android Tablet)**: [http://localhost:8080/postlam](http://localhost:8080/postlam)
+   - **Post-Lam Second Monitor (EL1)**: [http://localhost:8080/postlam/second](http://localhost:8080/postlam/second)
    - **Database Audit Log**: [http://localhost:8080/database.html](http://localhost:8080/database.html)
    - **Secondary Telemetry**: [http://localhost:8080/telemetry.html](http://localhost:8080/telemetry.html)
+
+---
+
+### Station Modes: Final Inspection (FVI) vs. Post-Lam Inspection
+
+The console supports both **Final Visual Inspection (`fvi`)** and **Post-Lam Visual Inspection (`postlam`)** using the same `index.html` and `telemetry.html` files, with **no clickable UI switcher** so operators cannot accidentally change stations:
+
+- **Locked URLs**: Open `/postlam` and `/postlam/second` on Post-Lam workstations/tablets (or `/` and `/second` for FVI).
+- **Server-Wide Lock**: Start the server with `python server.py --station postlam` (or set `STATION_MODE=postlam` in `.env`) to lock all routes on that machine to Post-Lam mode.
+- **Post-Lam Differences**:
+  - **Selectable Areas**: Outer Frame (`FRM`) and Junction Boxes (`JBX1`, `JBX2`, `JBX3`) are hidden and disabled, along with `Frame` and `Junction Box` defect categories. Only the 24×6 Cell Matrix (`A1`–`F24`) and Center Busbar (`BBAR`) are active.
+  - **Database Tables**: Persists to `dbo.PostLam_Visual_Inspections` and `dbo.PostLam_Inspection_Defects` in MSSQL `PL2` (and isolated local SQLite tables `postlam_visual_inspections` / `postlam_inspection_defects`).
+  - **Dual Post-Lam EL1 FTP Fetching**: Queries `dbo.EL1` metadata (`L2_QEL001` vs. `L2_QEL002`) and fetches images automatically across **both Post-Lam EL PCs** (`10.1.19.75` and `10.1.19.86` via `/EL/<YYYYMMDD>/{Day,Night}/{OK,NG}/{Module_ID}.jpg`, using `POSTLAM_FTP_HOSTS`, `POSTLAM_FTP_USERNAME`, `POSTLAM_FTP_PASSWORD`).
+  - **Single-Screen Android Tablet EL1 Viewer**: In `/postlam` mode, an embedded **EL1 Inspection Image** card renders directly above the Front/Back grids with `OK`/`NG` badge, EL machine badge (`L2_QEL001`/`L2_QEL002`), mirrored EL coordinates (`24..1` & `A..F`), 2-finger pinch-to-zoom, 1-finger pan, and double-tap reset.
+  - **Conveyor Isolation**: Ignores downstream FVI `CH88` MQTT conveyor arrivals so mid-line Post-Lam inspections are never overwritten.
+
+---
+
+### Hosting on Docker for Android Tablets (Recommended Over Standalone APKs)
+
+Hosting everything in **one Docker container on your plant server PC** gives Android tablets instant updates whenever you push/pull changes in this repository—no rebuilding or reinstalling APKs on every tablet:
+
+1. **Direct Plant Network Access (Same Pattern as CMMS)**:
+   - Run `docker compose up -d` on the server PC (ensure TCP port `8080` is allowed through Windows Firewall).
+   - On startup, `server.py` prints the server's LAN URL (e.g., `http://<SERVER-IP>:8080/postlam`).
+   - Open Chrome on the Android tablet, navigate to `http://<SERVER-IP>:8080/postlam`, tap Chrome's **⋮ menu → Add to Home screen / Install app**. It installs as a full-screen standalone app (via `/postlam/manifest.json` + network-first `/sw.js`), locked to `/postlam` and automatically updated on refresh whenever you update the repo on the server.
+2. **Optional Free HTTPS Tunnel (Cloudflare Quick Tunnel — $0)**:
+   - If tablets are on a restricted Wi-Fi / VLAN or need HTTPS without paying for a domain, start the optional tunnel profile:
+     ```bash
+     docker compose --profile tunnel up -d
+     docker logs fvi_cloudflared_tunnel
+     ```
+   - Open the generated `https://*.trycloudflare.com/postlam` URL printed in the tunnel logs. (On LAN, direct `http://<SERVER-IP>:8080/postlam` requires zero external internet and is fastest.)
 
 6. **To stop the server**:
    ```bash

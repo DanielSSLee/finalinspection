@@ -17,3 +17,13 @@ services:
     #   # Optional: map custom hostnames to plant server IPs if DNS is not available
     #   - "cmms-auth:${CMMS_HOST:-localhost}"
     #   - "mes-mqtt:${MQTT_BROKER:-localhost}"
+
+  # Optional free HTTPS tunnel for remote/tablet access (start with: docker compose --profile tunnel up -d)
+  cloudflared-tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: fvi_cloudflared_tunnel
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    depends_on:
+      - fvi-edge-server
+    command: tunnel --no-autoupdate --url http://fvi-edge-server:8080

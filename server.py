@@ -12,6 +12,7 @@ Features:
 """
 
 import os
+import re
 import sys
 import json
 import time
@@ -88,6 +89,7 @@ def _env_bool(key, default=False):
 CONFIG = {
     "host": _env_str("SERVER_HOST", "0.0.0.0"),
     "port": _env_int("SERVER_PORT", 8080),
+    "station_mode": _env_str("STATION_MODE", "fvi").strip().lower(),
     
     # 1. Company CMMS Authentication Settings
     "cmms_database": {
@@ -106,7 +108,7 @@ CONFIG = {
         "user_query": 'SELECT id as user_id, username, hashed_password as password_hash, full_name, role FROM public."user" WHERE LOWER(username) = LOWER(%s) AND is_active = true AND is_deleted = false'
     },
 
-    # 2. EL Testing Camera PC Image Acquisition via FTP
+    # 2. EL Testing Camera PC Image Acquisition via FTP (FVI -> EL2 PC)
     "ftp": {
         "host": _env_str("FTP_HOST", "100.100.200.223"),
         "port": _env_int("FTP_PORT", 21),
@@ -114,6 +116,25 @@ CONFIG = {
         "password": _env_str("FTP_PASSWORD", "USM26!"),
         "remote_dir": _env_str("FTP_REMOTE_DIR", "/"),
         "enabled": _env_bool("FTP_ENABLED", True)
+    },
+
+    # 2b. Post-Lam Dual EL1 Camera PCs Image Acquisition via FTP (L2_QEL001 & L2_QEL002)
+    "ftp_postlam": {
+        "hosts": [
+            h.strip() for h in (
+                _env_str("POSTLAM_FTP_HOSTS", "")
+                or ",".join([
+                    _env_str("POSTLAM_FTP_HOST", "10.1.19.75"),
+                    _env_str("POSTLAM_FTP_HOST_2", "10.1.19.86")
+                ])
+            ).split(",") if h.strip()
+        ],
+        "host": _env_str("POSTLAM_FTP_HOST", "10.1.19.75"),
+        "port": _env_int("POSTLAM_FTP_PORT", 21),
+        "username": _env_str("POSTLAM_FTP_USERNAME", "FTPUser"),
+        "password": _env_str("POSTLAM_FTP_PASSWORD", "USM26!"),
+        "remote_dir": _env_str("POSTLAM_FTP_REMOTE_DIR", "/EL"),
+        "enabled": _env_bool("POSTLAM_FTP_ENABLED", True)
     },
 
     # 3. Conveyor Arrival Sensor via MQTT (Line 2 Conveyors CH88 & CH89)
@@ -134,6 +155,8 @@ CONFIG = {
         "database": _env_str("MSSQL_DATABASE", "PL2"),
         "user": _env_str("MSSQL_USER", "Final_Inspection"),
         "password": _env_str("MSSQL_PASSWORD", "USM26"),
+        "postlam_user": _env_str("POSTLAM_MSSQL_USER", ""),
+        "postlam_password": _env_str("POSTLAM_MSSQL_PASSWORD", ""),
         "read_user": _env_str("MSSQL_READ_USER", "usm"),
         "read_password": _env_str("MSSQL_READ_PASSWORD", "usm2026"),
         "trust_server_certificate": _env_str("MSSQL_TRUST_CERT", "yes"),
@@ -336,10 +359,34 @@ def get_hipot_telemetry(module_id):
     }
 
 
-el_folder_cache = {}  # module_id -> "OK" | "NG"
+def _normalize_station(raw_val):
+    s = str(raw_val or "").strip().lower()
+    if s in ("postlam", "post_lam", "post-lam", "pl"):
+        return "postlam"
+    return "fvi"
 
 
-def extract_el_folder_status(image_path="", vis_image="", ai_result=None, retrial_result=None, module_id=""):
+def _resolve_station_mode(query_params=None, payload=None):
+    if isinstance(payload, dict) and payload.get("station"):
+        return _normalize_station(payload.get("station"))
+    if isinstance(query_params, dict):
+        q_vals = query_params.get("station") or query_params.get("mode")
+        if q_vals and len(q_vals) > 0 and q_vals[0]:
+            return _normalize_station(q_vals[0])
+    return _normalize_station(CONFIG.get("station_mode", "fvi"))
+
+
+el_folder_cache = {}  # cache_key -> "OK" | "NG"
+
+
+def _folder_cache_key(module_id, station="fvi"):
+    mod_key = str(module_id or "").strip().upper()
+    if not mod_key:
+        return ""
+    return f"postlam_{mod_key}" if _normalize_station(station) == "postlam" else mod_key
+
+
+def extract_el_folder_status(image_path="", vis_image="", ai_result=None, retrial_result=None, module_id="", station="fvi"):
     """
     Determines whether the EL image originates from the 'OK' or 'NG' folder.
     Checks image_path / vis_image segments first, then in-memory / sidecar caches,
@@ -354,16 +401,16 @@ def extract_el_folder_status(image_path="", vis_image="", ai_result=None, retria
         if "/NG/" in norm or norm.endswith("/NG"):
             return "NG"
 
-    mod_key = str(module_id or "").strip().upper()
-    if mod_key:
-        if el_folder_cache.get(mod_key) in ("OK", "NG"):
-            return el_folder_cache[mod_key]
+    cache_key = _folder_cache_key(module_id, station)
+    if cache_key:
+        if el_folder_cache.get(cache_key) in ("OK", "NG"):
+            return el_folder_cache[cache_key]
         try:
-            sidecar = CACHE_DIR / f"{mod_key}.folder"
+            sidecar = CACHE_DIR / f"{cache_key}.folder"
             if sidecar.exists():
                 val = sidecar.read_text(encoding="utf-8").strip().upper()
                 if val in ("OK", "NG"):
-                    el_folder_cache[mod_key] = val
+                    el_folder_cache[cache_key] = val
                     return val
         except Exception:
             pass
@@ -384,31 +431,32 @@ def extract_el_folder_status(image_path="", vis_image="", ai_result=None, retria
     return ""
 
 
-def _cache_el_folder_status(module_id, status):
-    mod_key = str(module_id or "").strip().upper()
+def _cache_el_folder_status(module_id, status, station="fvi"):
+    cache_key = _folder_cache_key(module_id, station)
     st = str(status or "").strip().upper()
-    if mod_key and st in ("OK", "NG"):
-        el_folder_cache[mod_key] = st
+    if cache_key and st in ("OK", "NG"):
+        el_folder_cache[cache_key] = st
         try:
             CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            (CACHE_DIR / f"{mod_key}.folder").write_text(st, encoding="utf-8")
+            (CACHE_DIR / f"{cache_key}.folder").write_text(st, encoding="utf-8")
         except Exception:
             pass
 
 
-def get_el2_metadata(module_id):
+def _query_el_metadata(table_name, module_id, include_vis_image=True, station="fvi"):
     """
-    Queries dbo.EL2 in MSSQL PL2 for module EL inspection metadata.
+    Shared helper querying dbo.EL1 or dbo.EL2 in MSSQL PL2 for module EL metadata.
     """
+    vis_col = ", Vis_Image" if include_vis_image else ""
     if module_id:
         conn, engine = get_mssql_read_connection()
         if conn:
             try:
                 cur = conn.cursor()
-                query = """
+                query = f"""
                     SELECT TOP 1 Record_ID, Module_ID, CONVERT(varchar(32), Tested_At, 120) AS Tested_At,
-                           AIResult, RetrialResult, Image_Path, Vis_Image, Result_File, Tester_Name
-                    FROM dbo.EL2
+                           AIResult, RetrialResult, Image_Path{vis_col}, Result_File, Tester_Name
+                    FROM {table_name}
                     WHERE Module_ID = ?
                     ORDER BY Tested_At DESC, Record_ID DESC
                 """
@@ -421,18 +469,22 @@ def get_el2_metadata(module_id):
                     rdict = dict(zip(cols, row))
                     conn.close()
                     img_path = str(rdict.get("image_path") or "")
-                    vis_img = str(rdict.get("vis_image") or "")
+                    vis_img = str(rdict.get("vis_image") or "") if include_vis_image else ""
+                    res_file = str(rdict.get("result_file") or "")
                     ai_res = rdict.get("airesult")
                     retrial_res = rdict.get("retrialresult")
+                    machine_match = re.search(r"L2_QEL\d+", f"{img_path} {res_file}", re.IGNORECASE)
+                    el_machine = machine_match.group(0).upper() if machine_match else ""
                     folder_status = extract_el_folder_status(
                         image_path=img_path,
                         vis_image=vis_img,
                         ai_result=ai_res,
                         retrial_result=retrial_res,
-                        module_id=module_id
+                        module_id=module_id,
+                        station=station
                     )
                     if folder_status in ("OK", "NG"):
-                        _cache_el_folder_status(module_id, folder_status)
+                        _cache_el_folder_status(module_id, folder_status, station=station)
                     return {
                         "found": True,
                         "source": f"MSSQL_PL2_LIVE ({engine})",
@@ -443,18 +495,19 @@ def get_el2_metadata(module_id):
                         "retrial_result": retrial_res,
                         "image_path": img_path,
                         "vis_image": vis_img,
-                        "result_file": str(rdict.get("result_file") or ""),
+                        "result_file": res_file,
                         "tester_name": str(rdict.get("tester_name") or ""),
+                        "el_machine": el_machine,
                         "folder_status": folder_status
                     }
                 conn.close()
-            except Exception as e:
+            except Exception:
                 try:
                     conn.close()
                 except Exception:
                     pass
 
-    fallback_folder = extract_el_folder_status(module_id=module_id)
+    fallback_folder = extract_el_folder_status(module_id=module_id, station=station)
     return {
         "found": False,
         "source": "SIMULATED_FALLBACK",
@@ -467,8 +520,20 @@ def get_el2_metadata(module_id):
         "vis_image": "",
         "result_file": "",
         "tester_name": "",
+        "el_machine": "",
         "folder_status": fallback_folder
     }
+
+
+def get_el2_metadata(module_id):
+    """Queries dbo.EL2 in MSSQL PL2 for FVI module EL inspection metadata."""
+    return _query_el_metadata("dbo.EL2", module_id, include_vis_image=True, station="fvi")
+
+
+def get_el1_metadata(module_id):
+    """Queries dbo.EL1 in MSSQL PL2 for Post-Lam module EL inspection metadata."""
+    return _query_el_metadata("dbo.EL1", module_id, include_vis_image=False, station="postlam")
+
 
 def get_latest_production_module():
     """
@@ -506,6 +571,7 @@ current_conveyor_panel = {
     "source": "Initial Baseline"
 }
 active_main_screen_module = ""
+active_main_screen_module_by_station = {"fvi": "", "postlam": ""}
 active_sessions = {}  # token -> user dict
 mqtt_connected = False
 mqtt_channel_serials = {"CH88": None, "CH89": None}
@@ -513,7 +579,7 @@ mqtt_queue = []  # list of {"panel_id": str, "channel": "CH88"|"CH89", "timestam
 prefetched_telemetry = {}  # panel_id -> {"sunsim": ..., "hipot": ..., "el_image": ..., "el_fallback": ..., "cached_at": float}
 _initial_conveyor_seeded = False
 _recent_inspections_lock = threading.Lock()
-_recent_inspections = {}  # module_id -> {"grade": grade, "timestamp": float, "record_id": int, "engine": str}
+_recent_inspections = {}  # (station, module_id) -> {"grade": grade, "timestamp": float, "record_id": int, "engine": str}
 
 # Defect Code to IEC Type ID (int2)
 DEFECT_CODE_TO_ID = {
@@ -544,11 +610,12 @@ _last_mssql_attempt = 0
 _last_mssql_read_attempt = 0
 _mssql_cooldown_sec = 10
 
-def get_mssql_connection():
+def get_mssql_connection(station="fvi"):
     """
     Connects to Microsoft SQL Server using credentials from environment variables / .env.
     Tries pyodbc first (ODBC Driver 17/18), falls back to pymssql.
     Configures pyodbc output converter for SQL Server datetimeoffset (-155).
+    Supports optional Post-Lam DB user/password falling back to default MSSQL user/password.
     """
     global _last_mssql_attempt
     cfg = CONFIG.get("mssql", {})
@@ -556,7 +623,13 @@ def get_mssql_connection():
         return None, None
 
     now = time.time()
-    if (now - _last_mssql_attempt) < _mssql_cooldown_sec:
+    station_norm = _normalize_station(station)
+    db_user = cfg.get("user")
+    db_password = cfg.get("password")
+    if station_norm == "postlam" and cfg.get("postlam_user"):
+        db_user = cfg.get("postlam_user")
+        db_password = cfg.get("postlam_password") or db_password
+    elif (now - _last_mssql_attempt) < _mssql_cooldown_sec:
         return None, None
 
     # 1. Try pyodbc (ODBC Driver 17 or 18)
@@ -572,8 +645,8 @@ def get_mssql_connection():
                     f"DRIVER={{{driver}}};"
                     f"SERVER={cfg['server']},{cfg.get('port', 1433)};"
                     f"DATABASE={cfg['database']};"
-                    f"UID={cfg['user']};"
-                    f"PWD={cfg['password']};"
+                    f"UID={db_user};"
+                    f"PWD={db_password};"
                     f"TrustServerCertificate=yes;"
                     f"Timeout={cfg.get('timeout', 3)};"
                 )
@@ -595,15 +668,16 @@ def get_mssql_connection():
         conn = pymssql.connect(
             server=cfg["server"],
             port=int(cfg.get("port", 1433)),
-            user=cfg["user"],
-            password=cfg["password"],
+            user=db_user,
+            password=db_password,
             database=cfg["database"],
             timeout=cfg.get("timeout", 3)
         )
         _last_mssql_attempt = 0
         return conn, "MSSQL_PYMSSQL"
     except Exception as e:
-        _last_mssql_attempt = now
+        if station_norm != "postlam" or not cfg.get("postlam_user"):
+            _last_mssql_attempt = now
         print(f"[MSSQL Notice] Offline fallback: {e}. Using local SQLite (retrying MSSQL in {_mssql_cooldown_sec}s).")
         return None, None
 
@@ -678,13 +752,13 @@ def get_mssql_read_connection():
     _last_mssql_read_attempt = now
     return get_mssql_connection()
 
-def execute_mssql_insert(query, params):
+def execute_mssql_insert(query, params, station="fvi"):
     """
     Executes an INSERT statement on Microsoft SQL Server.
     User 'Final_Inspection' has INSERT-only permissions on dbo.Final_Inspections and dbo.Final_Inspection_Defects.
     Automatically translates '?' param markers to '%s' if pymssql is used.
     """
-    conn, engine = get_mssql_connection()
+    conn, engine = get_mssql_connection(station=station)
     if not conn:
         return False, "OFFLINE_FALLBACK"
     try:
@@ -708,8 +782,8 @@ def execute_mssql_insert(query, params):
 def init_database():
     """
     Initializes database tables matching production schema with local persistence:
-    1. final_inspection_defects (Record_ID, Module_ID, Tested_At, Defect_Location, Defect_Type, Tester_Name)
-    2. final_inspections (Record_ID, Module_ID, Tested_At, Grade, Tester_Name)
+    1. final_inspection_defects / postlam_inspection_defects
+    2. final_inspections / postlam_visual_inspections
     3. cmms_users
     """
     with get_db() as conn:
@@ -751,6 +825,32 @@ def init_database():
             defect_cell VARCHAR(4),
             defect_type VARCHAR(30) NOT NULL,
             tester_name TEXT NOT NULL
+        )
+        """)
+
+        # 4. Post-Lam Visual Inspections Table (Matches dbo.PostLam_Visual_Inspections)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS postlam_visual_inspections (
+            record_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            module_id VARCHAR(16) NOT NULL,
+            tested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            grade VARCHAR(1) NOT NULL,
+            result_code VARCHAR(1) NOT NULL,
+            tester_name TEXT NOT NULL
+        )
+        """)
+
+        # 5. Post-Lam Inspection Defects Table (Matches dbo.PostLam_Inspection_Defects)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS postlam_inspection_defects (
+            record_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            module_id VARCHAR(16) NOT NULL,
+            tested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            defect_location VARCHAR(4),
+            defect_cell VARCHAR(4),
+            defect_type VARCHAR(30) NOT NULL,
+            tester_name TEXT NOT NULL,
+            side VARCHAR(10) DEFAULT 'front'
         )
         """)
 
@@ -800,20 +900,84 @@ def init_database():
 # ---------------------------------------------------------------------------
 # FTP Image Fetcher (Connects to EL Testing PC / FTP Server 100.100.200.223)
 # ---------------------------------------------------------------------------
-def fetch_el_image_via_ftp(panel_id, side="front", force_refresh=False):
+def _get_el_fallback_sample(panel_id, side_normalized, reason="FALLBACK_SAMPLE"):
+    if side_normalized == "back":
+        back_sample = BASE_DIR / "sample_el_back.jpg"
+        if back_sample.exists():
+            return back_sample, f"{reason}_BACK" if reason == "FALLBACK_SAMPLE" else reason
+    fallback_samples = [
+        BASE_DIR / "sample_el_1.jpg",
+        BASE_DIR / "sample_el_2.jpg",
+        BASE_DIR / "sample_el_3.jpg",
+        BASE_DIR / "sample_el_4.jpg"
+    ]
+    existing_samples = [s for s in fallback_samples if s.exists()]
+    if existing_samples:
+        chosen = existing_samples[abs(hash(panel_id)) % len(existing_samples)]
+        return chosen, reason
+    default_single = BASE_DIR / "solar_el_sample.jpg"
+    if default_single.exists():
+        return default_single, reason
+    return None, "NO_IMAGE_AVAILABLE"
+
+
+def _try_ftp_retr(ftp, remote_path, tmp_file):
+    try:
+        with open(tmp_file, "wb") as f:
+            ftp.retrbinary(f"RETR {remote_path}", f.write)
+        if tmp_file.exists() and tmp_file.stat().st_size > 0:
+            return True
+    except Exception:
+        pass
+    if tmp_file.exists():
+        try:
+            tmp_file.unlink()
+        except Exception:
+            pass
+    return False
+
+
+def _build_derived_ftp_paths(db_image_path, panel_id, station_norm):
+    paths = []
+    if not db_image_path:
+        return paths
+    clean_path = str(db_image_path).replace("\\", "/")
+    if station_norm == "postlam":
+        m_date = re.search(r"(\d{4})-?(\d{2})-?(\d{2})", clean_path)
+        m_shift = re.search(r"/(Day|Night)(?:/|$)", clean_path, re.IGNORECASE)
+        m_status = re.search(r"/(OK|NG)(?:/|$)", clean_path, re.IGNORECASE)
+        shift = m_shift.group(1).capitalize() if m_shift else "Day"
+        if m_date:
+            compact_date = f"{m_date.group(1)}{m_date.group(2)}{m_date.group(3)}"
+            if m_status:
+                paths.append(f"/EL/{compact_date}/{shift}/{m_status.group(1).upper()}/{panel_id}.jpg")
+            else:
+                paths.append(f"/EL/{compact_date}/{shift}/OK/{panel_id}.jpg")
+                paths.append(f"/EL/{compact_date}/{shift}/NG/{panel_id}.jpg")
+            paths.append(f"/EL/{compact_date}/{shift}/{panel_id}.jpg")
+    p1 = clean_path.replace("/el_ret_fujian", "")
+    p2 = p1.replace("/el/", "/").replace("/vis/", "/")
+    for cand in (p2, p1, clean_path):
+        if cand and cand not in paths:
+            paths.append(cand)
+    return paths
+
+
+def fetch_el_image_via_ftp(panel_id, side="front", force_refresh=False, station="fvi"):
     """
-    Connects to the EL Testing PC via FTP (100.100.200.223) and downloads the most recent module image.
-    Resolves exact path from the latest dbo.EL2 record in MSSQL PL2, with candidate transforms (p2, p1)
-    and OK/NG folder scans. Validates cached files against the latest dbo.EL2 record so reworked retakes
-    always replace older cached images.
+    Connects to the EL Testing PC(s) via FTP and downloads the most recent module image.
+    Uses dbo.EL2 + CONFIG['ftp'] for FVI and dbo.EL1 + CONFIG['ftp_postlam'] (dual PCs 10.1.19.75 & 10.1.19.86) for Post-Lam.
+    Validates cached files against the latest DB record so reworked retakes replace older cached images.
     """
+    station_norm = _normalize_station(station)
     side_normalized = "back" if str(side).lower() in ("back", "rear", "b") else "front"
     suffix = "_back" if side_normalized == "back" else ""
-    local_file = CACHE_DIR / f"{panel_id}{suffix}.jpg"
-    meta_file = CACHE_DIR / f"{panel_id}{suffix}.meta"
+    prefix = "postlam_" if station_norm == "postlam" else ""
+    local_file = CACHE_DIR / f"{prefix}{panel_id}{suffix}.jpg"
+    meta_file = CACHE_DIR / f"{prefix}{panel_id}{suffix}.meta"
 
-    # 1. Always check dbo.EL2 in MSSQL PL2 first for the most recent retake
-    el_meta = get_el2_metadata(panel_id)
+    # 1. Check dbo.EL1 (postlam) or dbo.EL2 (fvi) in MSSQL PL2 first for the most recent retake
+    el_meta = get_el1_metadata(panel_id) if station_norm == "postlam" else get_el2_metadata(panel_id)
     db_image_path = None
     if el_meta.get("found"):
         if side_normalized == "back" and el_meta.get("vis_image"):
@@ -823,7 +987,7 @@ def fetch_el_image_via_ftp(panel_id, side="front", force_refresh=False):
 
     current_sig = ""
     if el_meta.get("found"):
-        current_sig = f"{el_meta.get('record_id')}|{el_meta.get('tested_at')}|{db_image_path or ''}"
+        current_sig = f"{station_norm}|{el_meta.get('record_id')}|{el_meta.get('tested_at')}|{db_image_path or ''}"
 
     # Use local disk cache only if not forced and the DB record matches the cached signature
     if (not force_refresh) and local_file.exists() and current_sig and meta_file.exists():
@@ -833,182 +997,158 @@ def fetch_el_image_via_ftp(panel_id, side="front", force_refresh=False):
         except Exception:
             pass
 
-    if not CONFIG["ftp"]["enabled"]:
+    ftp_cfg = CONFIG["ftp_postlam"] if station_norm == "postlam" else CONFIG["ftp"]
+    if station_norm == "postlam":
+        raw_hosts = list(ftp_cfg.get("hosts") or [])
+        if not raw_hosts and ftp_cfg.get("host"):
+            raw_hosts = [ftp_cfg["host"]]
+        el_machine = str(el_meta.get("el_machine") or "").upper()
+        if ("L2_QEL002" in str(db_image_path or "").upper() or el_machine == "L2_QEL002") and "10.1.19.86" in raw_hosts:
+            raw_hosts = ["10.1.19.86"] + [h for h in raw_hosts if h != "10.1.19.86"]
+        elif ("L2_QEL001" in str(db_image_path or "").upper() or el_machine == "L2_QEL001") and "10.1.19.75" in raw_hosts:
+            raw_hosts = ["10.1.19.75"] + [h for h in raw_hosts if h != "10.1.19.75"]
+        hosts_to_try = raw_hosts
+    else:
+        hosts_to_try = [ftp_cfg.get("host")] if ftp_cfg.get("host") else []
+
+    if (not ftp_cfg.get("enabled")) or (not hosts_to_try):
         if local_file.exists():
             return local_file, "CACHED"
-        # If FTP is not physically online, fallback to local sample images
-        if side_normalized == "back":
-            back_sample = BASE_DIR / "sample_el_back.jpg"
-            if back_sample.exists():
-                return back_sample, "FALLBACK_SAMPLE_BACK"
-        fallback_samples = [
-            BASE_DIR / "sample_el_1.jpg",
-            BASE_DIR / "sample_el_2.jpg",
-            BASE_DIR / "sample_el_3.jpg",
-            BASE_DIR / "sample_el_4.jpg"
-        ]
-        existing_samples = [s for s in fallback_samples if s.exists()]
-        if existing_samples:
-            chosen = existing_samples[abs(hash(panel_id)) % len(existing_samples)]
-            return chosen, "FALLBACK_SAMPLE"
-        default_single = BASE_DIR / "solar_el_sample.jpg"
-        if default_single.exists():
-            return default_single, "FALLBACK_SAMPLE"
-        return None, "NO_IMAGE_AVAILABLE"
+        reason = "POSTLAM_FTP_PENDING_CREDENTIALS" if (station_norm == "postlam" and not hosts_to_try) else "FALLBACK_SAMPLE"
+        if reason == "POSTLAM_FTP_PENDING_CREDENTIALS":
+            print(f"[FTP Notice] Post-Lam FTP host/credentials not configured yet; serving fallback EL image for {panel_id}")
+        return _get_el_fallback_sample(panel_id, side_normalized, reason=reason)
 
-    ftp_cfg = CONFIG["ftp"]
-    try:
-        ftp = ftplib.FTP()
-        ftp.encoding = "gbk"
-        ftp.connect(ftp_cfg["host"], ftp_cfg["port"], timeout=5)
-        ftp.login(ftp_cfg["username"], ftp_cfg["password"])
+    derived_paths = _build_derived_ftp_paths(db_image_path, panel_id, station_norm)
+    if side_normalized == "back":
+        candidates = [f"{panel_id}_back.jpg", f"{panel_id}_B.jpg", f"{panel_id}_rear.jpg", f"{panel_id}.jpg"]
+    else:
+        candidates = [f"{panel_id}.jpg", f"{panel_id}_front.jpg", f"{panel_id}_F.jpg"]
 
+    tmp_file = CACHE_DIR / f"{prefix}{panel_id}{suffix}.tmp.{int(time.time() * 1000)}.jpg"
+    downloaded_host = None
+    last_error = None
+
+    for ftp_host in hosts_to_try:
         downloaded = False
-        tmp_file = CACHE_DIR / f"{panel_id}{suffix}.tmp.{int(time.time() * 1000)}.jpg"
+        ftp = None
+        try:
+            ftp = ftplib.FTP()
+            ftp.encoding = "gbk"
+            ftp.connect(ftp_host, int(ftp_cfg.get("port", 21)), timeout=4)
+            ftp.login(ftp_cfg["username"], ftp_cfg["password"])
 
-        # If dbo.EL2 returned an Image_Path, test derived paths:
-        # e.g. clean_path = '/el_ret_fujian/2026-11-11/L2_QEL003/Day/OK/el/USM0123110260015.jpg'
-        # p1 = '/2026-11-11/L2_QEL003/Day/OK/el/USM0123110260015.jpg'
-        # p2 = '/2026-11-11/L2_QEL003/Day/OK/USM0123110260015.jpg'
-        if db_image_path:
-            clean_path = str(db_image_path).replace("\\", "/")
-            p1 = clean_path.replace("/el_ret_fujian", "")
-            p2 = p1.replace("/el/", "/").replace("/vis/", "/")
-            for test_path in [p2, p1, clean_path]:
-                if not test_path:
-                    continue
+            # A. Try derived paths from dbo.EL1 / dbo.EL2 Image_Path
+            for test_path in derived_paths:
+                if _try_ftp_retr(ftp, test_path, tmp_file):
+                    downloaded = True
+                    tp_folder = extract_el_folder_status(image_path=test_path, station=station_norm)
+                    if tp_folder in ("OK", "NG"):
+                        _cache_el_folder_status(panel_id, tp_folder, station=station_norm)
+                    break
+
+            # B. Try configured remote_dir directly
+            if not downloaded:
                 try:
-                    with open(tmp_file, "wb") as f:
-                        ftp.retrbinary(f"RETR {test_path}", f.write)
-                    if tmp_file.exists() and tmp_file.stat().st_size > 0:
-                        downloaded = True
-                        tp_folder = extract_el_folder_status(image_path=test_path)
-                        if tp_folder in ("OK", "NG"):
-                            _cache_el_folder_status(panel_id, tp_folder)
-                        break
-                    else:
-                        if tmp_file.exists():
-                            tmp_file.unlink()
-                except Exception:
-                    if tmp_file.exists():
-                        try:
-                            tmp_file.unlink()
-                        except Exception:
-                            pass
-
-        if side_normalized == "back":
-            candidates = [f"{panel_id}_back.jpg", f"{panel_id}_B.jpg", f"{panel_id}_rear.jpg", f"{panel_id}.jpg"]
-        else:
-            candidates = [f"{panel_id}.jpg", f"{panel_id}_front.jpg", f"{panel_id}_F.jpg"]
-
-        # Try in root or configured remote_dir
-        if not downloaded:
-            try:
-                ftp.cwd(ftp_cfg.get("remote_dir", "/"))
-                for remote_name in candidates:
-                    try:
-                        with open(tmp_file, "wb") as f:
-                            ftp.retrbinary(f"RETR {remote_name}", f.write)
-                        if tmp_file.exists() and tmp_file.stat().st_size > 0:
+                    ftp.cwd(ftp_cfg.get("remote_dir", "/"))
+                    for remote_name in candidates:
+                        if _try_ftp_retr(ftp, remote_name, tmp_file):
                             downloaded = True
                             break
-                        else:
-                            if tmp_file.exists():
-                                tmp_file.unlink()
+                except Exception:
+                    pass
+
+            # C. Scan dated folders on this FTP host
+            if not downloaded:
+                scan_roots = []
+                if station_norm == "postlam":
+                    try:
+                        ftp.cwd("/EL")
+                        el_items = ftp.nlst()
+                        el_dates = sorted([d for d in el_items if str(d).startswith("202")], reverse=True)
+                        for df in el_dates[:5]:
+                            scan_roots.extend([
+                                f"/EL/{df}/Day/OK",
+                                f"/EL/{df}/Day/NG",
+                                f"/EL/{df}/Night/OK",
+                                f"/EL/{df}/Night/NG",
+                                f"/EL/{df}/Day",
+                                f"/EL/{df}/Night",
+                            ])
                     except Exception:
-                        if tmp_file.exists():
-                            try:
-                                tmp_file.unlink()
-                            except Exception:
-                                pass
-            except Exception:
-                pass
+                        pass
+                try:
+                    ftp.cwd("/")
+                    root_items = ftp.nlst()
+                    date_folders = sorted([d for d in root_items if str(d).startswith("202")], reverse=True)
+                    cam_dirs = ["L2_QEL001", "L2_QEL002", "L2_QEL003"] if station_norm == "postlam" else ["L2_QEL003"]
+                    for df in date_folders[:5]:
+                        for cam_dir in cam_dirs:
+                            scan_roots.extend([
+                                f"/{df}/{cam_dir}/Day/OK",
+                                f"/{df}/{cam_dir}/Day/NG",
+                                f"/{df}/{cam_dir}/Day/OK/el",
+                                f"/{df}/{cam_dir}/Day/NG/el",
+                                f"/{df}/{cam_dir}/Day",
+                                f"/{df}/{cam_dir}/Night/OK",
+                                f"/{df}/{cam_dir}/Night/NG",
+                                f"/{df}/{cam_dir}/Night/OK/el",
+                                f"/{df}/{cam_dir}/Night/NG/el",
+                                f"/{df}/{cam_dir}/Night",
+                                f"/{df}/{cam_dir}"
+                            ])
+                except Exception:
+                    pass
 
-        # If not found in root, check dated directories with OK and NG subfolders
-        if not downloaded:
-            try:
-                ftp.cwd("/")
-                root_items = ftp.nlst()
-                date_folders = sorted([d for d in root_items if d.startswith("202")], reverse=True)
-                for df in date_folders[:5]:
-                    sub_dirs = [
-                        f"/{df}/L2_QEL003/Day/OK",
-                        f"/{df}/L2_QEL003/Day/NG",
-                        f"/{df}/L2_QEL003/Day/OK/el",
-                        f"/{df}/L2_QEL003/Day/NG/el",
-                        f"/{df}/L2_QEL003/Day",
-                        f"/{df}/L2_QEL003/Night/OK",
-                        f"/{df}/L2_QEL003/Night/NG",
-                        f"/{df}/L2_QEL003/Night/OK/el",
-                        f"/{df}/L2_QEL003/Night/NG/el",
-                        f"/{df}/L2_QEL003/Night",
-                        f"/{df}/L2_QEL003"
-                    ]
-                    for sub_dir in sub_dirs:
-                        try:
-                            ftp.cwd(sub_dir)
-                            for remote_name in candidates:
-                                try:
-                                    with open(tmp_file, "wb") as f:
-                                        ftp.retrbinary(f"RETR {remote_name}", f.write)
-                                    if tmp_file.exists() and tmp_file.stat().st_size > 0:
-                                        downloaded = True
-                                        sd_folder = extract_el_folder_status(image_path=sub_dir)
-                                        if sd_folder in ("OK", "NG"):
-                                            _cache_el_folder_status(panel_id, sd_folder)
-                                        break
-                                    else:
-                                        if tmp_file.exists():
-                                            tmp_file.unlink()
-                                except Exception:
-                                    if tmp_file.exists():
-                                        try:
-                                            tmp_file.unlink()
-                                        except Exception:
-                                            pass
-                            if downloaded:
+                for sub_dir in scan_roots:
+                    try:
+                        ftp.cwd(sub_dir)
+                        for remote_name in candidates:
+                            if _try_ftp_retr(ftp, remote_name, tmp_file):
+                                downloaded = True
+                                sd_folder = extract_el_folder_status(image_path=sub_dir, station=station_norm)
+                                if sd_folder in ("OK", "NG"):
+                                    _cache_el_folder_status(panel_id, sd_folder, station=station_norm)
                                 break
-                        except Exception:
-                            continue
-                    if downloaded:
-                        break
-            except Exception:
-                pass
-
-        try:
-            ftp.quit()
-        except Exception:
-            try:
-                ftp.close()
-            except Exception:
-                pass
+                        if downloaded:
+                            break
+                    except Exception:
+                        continue
+        except Exception as e:
+            last_error = e
+            print(f"[FTP Notice] {ftp_host} ({station_norm}) scan error for {panel_id}: {e}")
+        finally:
+            if ftp is not None:
+                try:
+                    ftp.quit()
+                except Exception:
+                    try:
+                        ftp.close()
+                    except Exception:
+                        pass
 
         if downloaded and tmp_file.exists() and tmp_file.stat().st_size > 0:
-            tmp_file.replace(local_file)
-            if current_sig:
-                try:
-                    meta_file.write_text(current_sig, encoding="utf-8")
-                except Exception:
-                    pass
-            return local_file, "FTP_DOWNLOADED"
-        else:
-            if tmp_file.exists():
-                try:
-                    tmp_file.unlink()
-                except Exception:
-                    pass
-            if local_file.exists() and local_file.stat().st_size > 0:
-                return local_file, "CACHED_FALLBACK"
-            default_sample = BASE_DIR / ("sample_el_back.jpg" if side_normalized == "back" else "sample_el_1.jpg")
-            if default_sample.exists():
-                return default_sample, "FTP_FALLBACK"
-            return BASE_DIR / "solar_el_sample.jpg", "FTP_FALLBACK"
-    except Exception as e:
-        print(f"[FTP Error] Failed to fetch {side_normalized} image for {panel_id}: {e}")
-        default_sample = BASE_DIR / ("sample_el_back.jpg" if side_normalized == "back" else "sample_el_1.jpg")
-        if default_sample.exists():
-            return default_sample, "FTP_ERROR_FALLBACK"
-        return None, f"FTP_ERROR: {e}"
+            downloaded_host = ftp_host
+            break
+
+    if downloaded_host and tmp_file.exists() and tmp_file.stat().st_size > 0:
+        tmp_file.replace(local_file)
+        if current_sig:
+            try:
+                meta_file.write_text(current_sig, encoding="utf-8")
+            except Exception:
+                pass
+        return local_file, f"FTP_DOWNLOADED:{downloaded_host}"
+
+    if tmp_file.exists():
+        try:
+            tmp_file.unlink()
+        except Exception:
+            pass
+    if local_file.exists() and local_file.stat().st_size > 0:
+        return local_file, "CACHED_FALLBACK"
+    reason = "FTP_ERROR_FALLBACK" if last_error else "FTP_FALLBACK"
+    return _get_el_fallback_sample(panel_id, side_normalized, reason=reason)
 
 # ---------------------------------------------------------------------------
 # CMMS Authentication Verifier (Supports SQLite, External DB & REST)
@@ -1582,10 +1722,38 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
 
+    def _serve_html_with_station(self, html_path, station_mode="fvi"):
+        if not html_path.exists() or not html_path.is_file():
+            self.send_response(404)
+            self.end_headers()
+            return
+        with open(html_path, "rb") as f:
+            raw_bytes = f.read()
+        station_norm = _normalize_station(station_mode)
+        try:
+            html_text = raw_bytes.decode("utf-8")
+            inject_tag = f'<script>window.__LOCKED_STATION_MODE__ = "{station_norm}";</script>'
+            if "</head>" in html_text:
+                html_text = html_text.replace("</head>", f"  {inject_tag}\n</head>", 1)
+            else:
+                html_text = inject_tag + html_text
+            content = html_text.encode("utf-8")
+        except Exception:
+            content = raw_bytes
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(content)
+
     def do_GET(self):
         global current_conveyor_panel, active_main_screen_module, _initial_conveyor_seeded
         parsed = urlparse(self.path)
         path = parsed.path
+        query = parse_qs(parsed.query)
+        station = _resolve_station_mode(query_params=query)
 
         # 1. Server-Sent Events (SSE) Stream for real-time MQTT Conveyor updates
         if path in ("/api/stream", "/api/conveyor/stream"):
@@ -1622,7 +1790,7 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
 
         # 2. System Status & Diagnostics
         if path in ("/api/status", "/api/health"):
-            mssql_conn, mssql_engine = get_mssql_connection()
+            mssql_conn, mssql_engine = get_mssql_connection(station=station)
             mssql_cfg = CONFIG.get("mssql", {})
             if mssql_conn:
                 db_status = "CONNECTED"
@@ -1632,21 +1800,29 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                 db_status = "LOCAL_FALLBACK"
                 db_engine = "SQLite (Local Offline Storage)"
 
+            defects_tbl_local = "postlam_inspection_defects" if station == "postlam" else "final_inspection_defects"
             with get_db() as local_conn:
                 local_cur = local_conn.cursor()
                 try:
-                    local_cur.execute("SELECT COUNT(*) FROM final_inspection_defects")
+                    local_cur.execute(f"SELECT COUNT(*) FROM {defects_tbl_local}")
                     row = local_cur.fetchone()
                     total_defects = row[0] if row else 0
                 except Exception:
                     total_defects = 0
 
+            tables_list = (
+                ["dbo.PostLam_Visual_Inspections", "dbo.PostLam_Inspection_Defects"]
+                if station == "postlam"
+                else ["dbo.Final_Inspections", "dbo.Final_Inspection_Defects"]
+            )
             self.send_json(200, {
                 "status": "ONLINE",
+                "station_mode": _normalize_station(CONFIG.get("station_mode", "fvi")),
+                "active_station": station,
                 "database_status": db_status,
                 "database_engine": db_engine,
                 "target_database": f"{mssql_cfg.get('database', 'PL2')} @ {mssql_cfg.get('server', 'localhost')}",
-                "tables": ["dbo.Final_Inspections", "dbo.Final_Inspection_Defects"],
+                "tables": tables_list,
                 "total_defects_logged": total_defects,
                 "current_module": current_conveyor_panel,
                 "mqtt_connected": mqtt_connected,
@@ -1654,6 +1830,7 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                 "ch89_serial": mqtt_channel_serials.get("CH89"),
                 "queue": mqtt_queue,
                 "ftp_configured": CONFIG["ftp"],
+                "ftp_postlam_configured": bool(CONFIG["ftp_postlam"].get("host")),
                 "mqtt_configured": CONFIG["mqtt"]
             })
             return
@@ -1670,12 +1847,21 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
 
         # Active Module Synchronisation Endpoint
         if path == "/api/module/active":
-            mod = active_main_screen_module or current_conveyor_panel.get("panel_id") or ""
+            if station == "postlam":
+                mod = active_main_screen_module_by_station.get("postlam") or ""
+            else:
+                mod = (
+                    active_main_screen_module_by_station.get("fvi")
+                    or active_main_screen_module
+                    or current_conveyor_panel.get("panel_id")
+                    or ""
+                )
             if mod and (len(str(mod)) != 16 or not str(mod).startswith("USM")):
                 mod = ""
             self.send_json(200, {
                 "module_id": mod,
-                "panel_id": mod
+                "panel_id": mod,
+                "station": station
             })
             return
 
@@ -1695,6 +1881,7 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                     }
                     if not active_main_screen_module:
                         active_main_screen_module = clean_latest
+                        active_main_screen_module_by_station["fvi"] = clean_latest
             self.send_json(200, {
                 "panel_id": current_conveyor_panel.get("panel_id"),
                 "channel": current_conveyor_panel.get("channel", "CH88"),
@@ -1709,13 +1896,12 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
 
         # 5. Fetch EL Image via FTP (Front or Back Side)
         if path.startswith("/api/module/") and path.endswith("/el-image"):
-            # URL: /api/module/{panel_id}/el-image?side=front|back
-            query = parse_qs(parsed.query)
+            # URL: /api/module/{panel_id}/el-image?side=front|back&station=fvi|postlam
             side = query.get("side", ["front"])[0].lower()
             force_refresh = bool(query.get("refresh"))
             parts = path.strip("/").split("/")
             panel_id = parts[2] if len(parts) >= 3 else "DEFAULT"
-            image_path, source = fetch_el_image_via_ftp(panel_id, side=side, force_refresh=force_refresh)
+            image_path, source = fetch_el_image_via_ftp(panel_id, side=side, force_refresh=force_refresh, station=station)
 
             if image_path and image_path.exists():
                 with open(image_path, "rb") as f:
@@ -1724,6 +1910,7 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "image/jpeg")
                 self.send_header("Content-Length", str(len(img_data)))
                 self.send_header("X-Image-Source", source)
+                self.send_header("X-Station-Mode", station)
                 self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
@@ -1732,34 +1919,34 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                 self.send_json(404, {"error": "Image not found", "source": source})
             return
 
-        # 6. Fetch Logged Defects for Module (table: dbo.Final_Inspection_Defects)
+        # 6. Fetch Logged Defects for Module (table: dbo.Final_Inspection_Defects or dbo.PostLam_Inspection_Defects)
         if path.startswith("/api/defects"):
-            query = parse_qs(parsed.query)
             mod_id = query.get("module_id", [None])[0]
+            defects_tbl = "postlam_inspection_defects" if station == "postlam" else "final_inspection_defects"
             with get_db() as conn:
                 cursor = conn.cursor()
                 if mod_id:
-                    cursor.execute("SELECT * FROM final_inspection_defects WHERE module_id = ? ORDER BY record_id ASC", (mod_id,))
+                    cursor.execute(f"SELECT * FROM {defects_tbl} WHERE module_id = ? ORDER BY record_id ASC", (mod_id,))
                 else:
-                    cursor.execute("SELECT * FROM final_inspection_defects ORDER BY record_id DESC LIMIT 100")
+                    cursor.execute(f"SELECT * FROM {defects_tbl} ORDER BY record_id DESC LIMIT 100")
                 rows = [dict(r) for r in cursor.fetchall()]
                 for r in rows:
                     t = r.get("tested_at")
                     if t and isinstance(t, str) and not t.endswith("Z") and not ("+" in t or "-" in t[10:]):
                         r["tested_at"] = t.replace(" ", "T") + "Z"
-            self.send_json(200, {"defects": rows})
+            self.send_json(200, {"defects": rows, "station": station})
             return
 
-        # 7. Fetch Overall Inspection / Grade for Module (table: dbo.Final_Inspections)
-        # Supports: ?module_id=..., ?search=..., ?grade=..., ?limit=...
-        # Returns records ordered by tested_at DESC, with joined defect statistics
+        # 7. Fetch Overall Inspection / Grade for Module (dbo.Final_Inspections or dbo.PostLam_Visual_Inspections)
+        # Supports: ?module_id=..., ?search=..., ?grade=..., ?limit=..., ?station=...
         if path.startswith("/api/inspections"):
-            query = parse_qs(parsed.query)
             mod_id = query.get("module_id", [None])[0]
+            insp_tbl = "postlam_visual_inspections" if station == "postlam" else "final_inspections"
+            defects_tbl = "postlam_inspection_defects" if station == "postlam" else "final_inspection_defects"
             with get_db() as conn:
                 cursor = conn.cursor()
                 if mod_id:
-                    cursor.execute("""
+                    cursor.execute(f"""
                     SELECT 
                         fi.record_id,
                         fi.module_id,
@@ -1769,8 +1956,8 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                         fi.tester_name,
                         COUNT(fd.record_id) as defect_count,
                         GROUP_CONCAT(fd.defect_type, '; ') as defect_summary
-                    FROM final_inspections fi
-                    LEFT JOIN final_inspection_defects fd ON fi.module_id = fd.module_id
+                    FROM {insp_tbl} fi
+                    LEFT JOIN {defects_tbl} fd ON fi.module_id = fd.module_id
                     WHERE fi.module_id = ?
                     GROUP BY fi.record_id
                     ORDER BY fi.record_id DESC LIMIT 1
@@ -1781,7 +1968,7 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                         t = data["tested_at"]
                         if isinstance(t, str) and not t.endswith("Z") and not ("+" in t or "-" in t[10:]):
                             data["tested_at"] = t.replace(" ", "T") + "Z"
-                    self.send_json(200, {"inspection": data, "records": [data] if data else []})
+                    self.send_json(200, {"inspection": data, "records": [data] if data else [], "station": station})
                     return
                 else:
                     search_term = query.get("search", [None])[0] or query.get("q", [None])[0]
@@ -1789,7 +1976,7 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                     limit_str = query.get("limit", ["200"])[0]
                     limit = int(limit_str) if limit_str and limit_str.isdigit() else 200
 
-                    sql = """
+                    sql = f"""
                     SELECT 
                         fi.record_id,
                         fi.module_id,
@@ -1799,8 +1986,8 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                         fi.tester_name,
                         COUNT(fd.record_id) as defect_count,
                         GROUP_CONCAT(fd.defect_type, '; ') as defect_summary
-                    FROM final_inspections fi
-                    LEFT JOIN final_inspection_defects fd ON fi.module_id = fd.module_id
+                    FROM {insp_tbl} fi
+                    LEFT JOIN {defects_tbl} fd ON fi.module_id = fd.module_id
                     """
                     params = []
                     where_clauses = []
@@ -1836,14 +2023,14 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                             r["tested_at"] = t.replace(" ", "T") + "Z"
 
                     # Compute live summary metrics
-                    cursor.execute("""
+                    cursor.execute(f"""
                     SELECT 
                         COUNT(*) as total,
                         SUM(CASE WHEN grade IN ('0', 'A') THEN 1 ELSE 0 END) as count_a,
                         SUM(CASE WHEN grade IN ('1', 'B') THEN 1 ELSE 0 END) as count_b,
                         SUM(CASE WHEN grade IN ('2', 'R') THEN 1 ELSE 0 END) as count_r,
                         SUM(CASE WHEN grade IN ('3', 'X') THEN 1 ELSE 0 END) as count_x
-                    FROM final_inspections
+                    FROM {insp_tbl}
                     """)
                     sum_row = cursor.fetchone()
                     summary = dict(sum_row) if sum_row else {"total": 0, "count_a": 0, "count_b": 0, "count_r": 0, "count_x": 0}
@@ -1854,13 +2041,13 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                         "inspection": rows,
                         "records": rows,
                         "total_count": summary.get("total", len(rows)),
-                        "summary": summary
+                        "summary": summary,
+                        "station": station
                     })
                     return
 
         # 8. Sun Simulator Metrology Endpoint (SQLExpress / Simulation Fallback)
         if path.startswith("/api/telemetry/sunsim"):
-            query = parse_qs(parsed.query)
             mod_id = query.get("module_id", [None])[0] or current_conveyor_panel.get("panel_id", "")
             data = get_sunsim_telemetry(mod_id)
             self.send_json(200, data)
@@ -1868,51 +2055,60 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
 
         # 9. Hi-Pot Electrical Safety Endpoint (MSSQL PL2 / Simulation Fallback)
         if path.startswith("/api/telemetry/hipot"):
-            query = parse_qs(parsed.query)
             mod_id = query.get("module_id", [None])[0] or current_conveyor_panel.get("panel_id", "")
             data = get_hipot_telemetry(mod_id)
             self.send_json(200, data)
             return
 
-        # 10. EL2 Inspection Endpoint (MSSQL PL2 dbo.EL2)
-        if path.startswith("/api/telemetry/el2") or path.startswith("/api/telemetry/el"):
-            query = parse_qs(parsed.query)
-            mod_id = query.get("module_id", [None])[0] or current_conveyor_panel.get("panel_id", "")
-            data = get_el2_metadata(mod_id)
+        # 10. EL1 / EL2 Inspection Metadata Endpoints (MSSQL PL2 dbo.EL1 / dbo.EL2)
+        if path.startswith("/api/telemetry/el1"):
+            mod_id = query.get("module_id", [None])[0] or active_main_screen_module_by_station.get("postlam", "")
+            data = get_el1_metadata(mod_id)
             self.send_json(200, data)
             return
 
-        # 11. Combined Telemetry Endpoint (SunSim + Hi-Pot + EL2 + EL Images)
-        if path.startswith("/api/telemetry"):
-            query = parse_qs(parsed.query)
+        if path.startswith("/api/telemetry/el2") or path.startswith("/api/telemetry/el"):
             mod_id = query.get("module_id", [None])[0] or current_conveyor_panel.get("panel_id", "")
+            data = get_el1_metadata(mod_id) if station == "postlam" else get_el2_metadata(mod_id)
+            self.send_json(200, data)
+            return
+
+        # 11. Combined Telemetry Endpoint (SunSim + Hi-Pot + EL1/EL2 + EL Images)
+        if path.startswith("/api/telemetry"):
+            mod_id = query.get("module_id", [None])[0] or (
+                active_main_screen_module_by_station.get("postlam", "")
+                if station == "postlam"
+                else current_conveyor_panel.get("panel_id", "")
+            )
             force_fresh = bool(query.get("_t"))
+            cache_key = f"{station}:{mod_id}"
 
             # Instant cache hit from MQTT background prefetch (expires after 5s so reworked modules refresh)
-            cached = prefetched_telemetry.get(mod_id)
-            if cached and not force_fresh and cached.get("el2") is not None and (time.time() - cached.get("cached_at", 0) < 5.0):
+            cached = prefetched_telemetry.get(cache_key) or (prefetched_telemetry.get(mod_id) if station == "fvi" else None)
+            if cached and not force_fresh and (cached.get("el2") is not None or cached.get("el1") is not None) and (time.time() - cached.get("cached_at", 0) < 5.0):
                 self.send_json(200, cached)
                 return
 
             sunsim = get_sunsim_telemetry(mod_id)
             hipot = get_hipot_telemetry(mod_id)
-            el2 = get_el2_metadata(mod_id)
-            el_folder = (el2.get("folder_status") if isinstance(el2, dict) else "") or extract_el_folder_status(module_id=mod_id)
+            el_meta = get_el1_metadata(mod_id) if station == "postlam" else get_el2_metadata(mod_id)
+            el_folder = (el_meta.get("folder_status") if isinstance(el_meta, dict) else "") or extract_el_folder_status(module_id=mod_id, station=station)
             if not el_folder:
                 # Try resolving via FTP image fetch so folder sidecar is populated
                 try:
-                    fetch_el_image_via_ftp(mod_id, side="front")
-                    el_folder = extract_el_folder_status(module_id=mod_id)
+                    fetch_el_image_via_ftp(mod_id, side="front", station=station)
+                    el_folder = extract_el_folder_status(module_id=mod_id, station=station)
                 except Exception:
                     pass
 
             # EL Image for single-module reference display on Monitor 2
             sample_num = (abs(hash(mod_id)) % 4) + 1
-            el_image_url = f"/api/module/{mod_id}/el-image?side=front"
+            el_image_url = f"/api/module/{mod_id}/el-image?side=front&station={station}"
             el_sample_fallback = f"sample_el_{sample_num}.jpg"
 
             telemetry_data = {
                 "module_id": mod_id,
+                "station": station,
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
                 "el_image": el_image_url,
                 "el_fallback": el_sample_fallback,
@@ -1921,15 +2117,72 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                 "sunsim": sunsim,
                 "sun_simulator": sunsim,
                 "hipot": hipot,
-                "el2": el2,
+                "el2": el_meta,
+                "el1": el_meta if station == "postlam" else None,
                 "cached_at": time.time()
             }
-            prefetched_telemetry[mod_id] = telemetry_data
+            prefetched_telemetry[cache_key] = telemetry_data
+            if station == "fvi":
+                prefetched_telemetry[mod_id] = telemetry_data
             self.send_json(200, telemetry_data)
             return
 
-        # 11. Serve Static Files (index.html, telemetry.html, styles.css, app.js, config.js, images)
-        # Clean routing for Second Monitor page (/second, /second/, /screen2, /monitor2, /telemetry)
+        # 12. PWA Manifest, Service Worker & Locked Post-Lam Routes (Reuses Single index.html and telemetry.html)
+        if path in ("/manifest.json", "/postlam/manifest.json"):
+            manifest_station = "postlam" if path.startswith("/postlam/") else station
+            is_pl = manifest_station == "postlam"
+            manifest_data = {
+                "name": "USM Post-Lam Visual Inspection" if is_pl else "USM Final Visual Inspection",
+                "short_name": "Post-Lam QC" if is_pl else "FVI QC",
+                "description": "Shop-floor Photovoltaic Inspection Console & EL Viewer",
+                "start_url": "/postlam" if is_pl else "/",
+                "scope": "/",
+                "display": "standalone",
+                "orientation": "any",
+                "background_color": "#0b0f19",
+                "theme_color": "#0b0f19",
+                "icons": [
+                    {
+                        "src": "/app-icon.svg",
+                        "sizes": "any",
+                        "type": "image/svg+xml",
+                        "purpose": "any maskable"
+                    }
+                ]
+            }
+            self.send_json(200, manifest_data)
+            return
+
+        if path in ("/sw.js", "/postlam/sw.js"):
+            sw_path = BASE_DIR / "sw.js"
+            if sw_path.exists():
+                with open(sw_path, "rb") as f:
+                    content = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/javascript; charset=utf-8")
+                self.send_header("Content-Length", str(len(content)))
+                self.send_header("Service-Worker-Allowed", "/")
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                self.end_headers()
+                self.wfile.write(content)
+                return
+
+        if path in ("/postlam/", "/postlam/second/", "/postlam/screen2/", "/postlam/monitor2/", "/postlam/telemetry/"):
+            clean_dest = path.rstrip("/")
+            query_str = f"?{parsed.query}" if parsed.query else ""
+            self.send_response(302)
+            self.send_header("Location", f"{clean_dest}{query_str}")
+            self.end_headers()
+            return
+
+        if path == "/postlam":
+            self._serve_html_with_station(BASE_DIR / "index.html", station_mode="postlam")
+            return
+
+        if path in ("/postlam/second", "/postlam/screen2", "/postlam/monitor2", "/postlam/telemetry"):
+            self._serve_html_with_station(BASE_DIR / "telemetry.html", station_mode="postlam")
+            return
+
         if path in ("/second/", "/screen2/", "/monitor2/", "/telemetry/"):
             clean_dest = path.rstrip("/")
             query_str = f"?{parsed.query}" if parsed.query else ""
@@ -1939,19 +2192,12 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
             return
 
         if path in ("/second", "/screen2", "/monitor2", "/telemetry"):
-            telemetry_path = BASE_DIR / "telemetry.html"
-            if telemetry_path.exists():
-                with open(telemetry_path, "rb") as f:
-                    content = f.read()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(content)))
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.end_headers()
-                self.wfile.write(content)
-                return
+            self._serve_html_with_station(BASE_DIR / "telemetry.html", station_mode=station)
+            return
 
         rel_path = path.lstrip("/")
+        if rel_path.startswith("postlam/"):
+            rel_path = rel_path[len("postlam/"):]
         if not rel_path or rel_path == "":
             rel_path = "index.html"
         
@@ -1973,6 +2219,10 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
 
         if rel_path in ("second", "second.html", "screen2", "monitor2", "telemetry"):
             rel_path = "telemetry.html"
+
+        if rel_path in ("index.html", "telemetry.html"):
+            self._serve_html_with_station(BASE_DIR / rel_path, station_mode=station)
+            return
         
         file_path = BASE_DIR / rel_path
         if file_path.exists() and file_path.is_file():
@@ -1995,31 +2245,38 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
         global current_conveyor_panel, mqtt_queue, active_main_screen_module
         parsed = urlparse(self.path)
         path = parsed.path
+        query = parse_qs(parsed.query)
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
         try:
             payload = json.loads(body)
         except Exception:
             payload = {}
+        station = _resolve_station_mode(query_params=query, payload=payload)
 
         # Active Module Synchronisation (from Main Screen)
         if path == "/api/module/active":
             module_id = str(payload.get("module_id") or payload.get("panel_id") or "").strip().upper()[:16]
             if len(module_id) == 16 and module_id.startswith("USM"):
-                active_main_screen_module = module_id
-                current_conveyor_panel["panel_id"] = module_id
-                channel = str(payload.get("channel", "CH88")).strip().upper()
-                if channel in ("CH88", "MANUAL"):
-                    current_conveyor_panel["channel"] = channel
+                active_main_screen_module_by_station[station] = module_id
+                channel = str(payload.get("channel", "CH88" if station == "fvi" else "MANUAL")).strip().upper()
+                if station == "fvi":
+                    active_main_screen_module = module_id
+                    current_conveyor_panel["panel_id"] = module_id
+                    if channel in ("CH88", "MANUAL"):
+                        current_conveyor_panel["channel"] = channel
                 broadcast_sse("ACTIVE_MODULE_SYNC", {
                     "module_id": module_id,
                     "panel_id": module_id,
-                    "channel": current_conveyor_panel.get("channel", "CH88")
+                    "station": station,
+                    "channel": channel
                 })
+            current_mod = active_main_screen_module_by_station.get(station, "")
             self.send_json(200, {
                 "success": True,
-                "module_id": active_main_screen_module,
-                "panel_id": active_main_screen_module
+                "station": station,
+                "module_id": current_mod,
+                "panel_id": current_mod
             })
             return
 
@@ -2080,7 +2337,7 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
             self.send_json(200, {"success": True, "message": "Logged out"})
             return
 
-        # 3. INSTANT DATABASE SYNC ON CONFIRM (User table: dbo.Final_Inspection_Defects)
+        # 3. INSTANT DATABASE SYNC ON CONFIRM (dbo.Final_Inspection_Defects or dbo.PostLam_Inspection_Defects)
         # Record_ID (IDENTITY) and Tested_At (datetimeoffset)
         if path == "/api/defects":
             module_id = str(payload.get("module_id", "")).strip()[:16]
@@ -2096,35 +2353,39 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                 self.send_json(400, {"error": "Missing required fields (module_id, defect_location)"})
                 return
 
-            # 1. Sync immediately to Microsoft SQL Server (dbo.Final_Inspection_Defects)
-            mssql_query = """
-            INSERT INTO dbo.Final_Inspection_Defects (Module_ID, Tested_At, Defect_Location, Defect_Type, Tester_Name)
+            mssql_table = "dbo.PostLam_Inspection_Defects" if station == "postlam" else "dbo.Final_Inspection_Defects"
+            sqlite_table = "postlam_inspection_defects" if station == "postlam" else "final_inspection_defects"
+
+            # 1. Sync immediately to Microsoft SQL Server
+            mssql_query = f"""
+            INSERT INTO {mssql_table} (Module_ID, Tested_At, Defect_Location, Defect_Type, Tester_Name)
             VALUES (?, SYSDATETIMEOFFSET(), ?, ?, ?)
             """
-            mssql_success, mssql_engine = execute_mssql_insert(mssql_query, (module_id, defect_location, defect_type, tester_name))
+            mssql_success, mssql_engine = execute_mssql_insert(mssql_query, (module_id, defect_location, defect_type, tester_name), station=station)
 
             # 2. Always persist to local SQLite for UI instant querying, sequential record_id, and offline cache
             with get_db() as local_conn:
                 local_cur = local_conn.cursor()
                 try:
-                    local_cur.execute("""
-                    INSERT INTO final_inspection_defects (module_id, defect_location, defect_cell, defect_type, tester_name, side)
+                    local_cur.execute(f"""
+                    INSERT INTO {sqlite_table} (module_id, defect_location, defect_cell, defect_type, tester_name, side)
                     VALUES (?, ?, ?, ?, ?, ?)
                     """, (module_id, defect_location, defect_location, defect_type, tester_name, side))
                 except Exception:
-                    local_cur.execute("""
-                    INSERT INTO final_inspection_defects (module_id, defect_location, defect_cell, defect_type, tester_name)
+                    local_cur.execute(f"""
+                    INSERT INTO {sqlite_table} (module_id, defect_location, defect_cell, defect_type, tester_name)
                     VALUES (?, ?, ?, ?, ?)
                     """, (module_id, defect_location, defect_location, defect_type, tester_name))
                 local_conn.commit()
                 record_id = local_cur.lastrowid
 
             dest_str = f"MSSQL ({mssql_engine})" if mssql_success else "SQLite (Local Cache)"
-            print(f"[DB Sync] Inserted into Final_Inspection_Defects [{dest_str}]: {module_id} cell {defect_location} type '{defect_type}' ({side}) by {tester_name} (Local ID: #{record_id})")
+            print(f"[DB Sync] Inserted into {mssql_table} [{dest_str}]: {module_id} cell {defect_location} type '{defect_type}' ({side}) by {tester_name} (Local ID: #{record_id})")
 
             self.send_json(200, {
                 "success": True,
                 "saved_to_db": True,
+                "station": station,
                 "record_id": record_id,
                 "module_id": module_id,
                 "defect_location": defect_location,
@@ -2143,24 +2404,25 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
             raw_cell = str(payload.get("defect_location") or payload.get("defect_cell") or payload.get("cell_coord", "")).strip()
             defect_cell = "FRM" if raw_cell.upper() == "FRAME" else raw_cell[:4]
             side = str(payload.get("side", "")).strip().lower()
+            sqlite_table = "postlam_inspection_defects" if station == "postlam" else "final_inspection_defects"
             with get_db() as local_conn:
                 cursor = local_conn.cursor()
                 if side:
                     cursor.execute(
-                        "DELETE FROM final_inspection_defects WHERE module_id = ? AND (defect_location = ? OR defect_cell = ?) AND LOWER(COALESCE(side, 'front')) = ?",
+                        f"DELETE FROM {sqlite_table} WHERE module_id = ? AND (defect_location = ? OR defect_cell = ?) AND LOWER(COALESCE(side, 'front')) = ?",
                         (module_id, defect_cell, defect_cell, side)
                     )
                 else:
                     cursor.execute(
-                        "DELETE FROM final_inspection_defects WHERE module_id = ? AND (defect_location = ? OR defect_cell = ?)",
+                        f"DELETE FROM {sqlite_table} WHERE module_id = ? AND (defect_location = ? OR defect_cell = ?)",
                         (module_id, defect_cell, defect_cell)
                     )
                 local_conn.commit()
-            print(f"[DB Local Delete] Removed defect cell {defect_cell} ({side or 'any side'}) for module {module_id} from local cache. (MSSQL maintains append-only audit trail)")
-            self.send_json(200, {"success": True, "deleted": defect_cell, "side": side})
+            print(f"[DB Local Delete] Removed defect cell {defect_cell} ({side or 'any side'}) for module {module_id} from {sqlite_table}. (MSSQL maintains append-only audit trail)")
+            self.send_json(200, {"success": True, "deleted": defect_cell, "side": side, "station": station})
             return
 
-        # 5. Commit Final Inspection Grade (User table: dbo.Final_Inspections)
+        # 5. Commit Inspection Grade (dbo.Final_Inspections or dbo.PostLam_Visual_Inspections)
         # Requirement: numeric grading 0 (A), 1 (B), 2 (Rework/Retest), 3 (Reject)
         if path == "/api/inspections":
             module_id = str(payload.get("module_id", "")).strip()[:16]
@@ -2184,20 +2446,22 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                 self.send_json(400, {"error": "Module serial must start with USM and have 16 characters (including USM)"})
                 return
 
-            # De-duplication check: Suppress duplicate submissions of identical (module_id, grade) within 15 seconds
+            # De-duplication check: Suppress duplicate submissions of identical (station, module_id, grade) within 15 seconds
             now_ts = time.time()
+            dedup_key = f"{station}:{module_id}"
             with _recent_inspections_lock:
                 # Purge entries older than 60s
                 for m in list(_recent_inspections.keys()):
                     if now_ts - _recent_inspections[m]["timestamp"] > 60:
                         _recent_inspections.pop(m, None)
 
-                prev = _recent_inspections.get(module_id)
+                prev = _recent_inspections.get(dedup_key)
                 if prev and prev.get("grade") == grade and (now_ts - prev.get("timestamp", 0)) < 15.0:
                     elapsed = now_ts - prev["timestamp"]
-                    print(f"[DB Sync] Duplicate submission suppressed for {module_id} -> Grade [{grade}] ({elapsed:.1f}s ago). Returning previous record #{prev['record_id']}")
+                    print(f"[DB Sync] Duplicate submission suppressed ({station}) for {module_id} -> Grade [{grade}] ({elapsed:.1f}s ago). Returning previous record #{prev['record_id']}")
                     self.send_json(200, {
                         "success": True,
+                        "station": station,
                         "record_id": prev["record_id"],
                         "module_id": module_id,
                         "grade": grade,
@@ -2211,18 +2475,21 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                     })
                     return
 
-            # 1. Sync immediately to Microsoft SQL Server (dbo.Final_Inspections)
-            mssql_query = """
-            INSERT INTO dbo.Final_Inspections (Module_ID, Tested_At, Grade, Tester_Name)
+            mssql_table = "dbo.PostLam_Visual_Inspections" if station == "postlam" else "dbo.Final_Inspections"
+            sqlite_table = "postlam_visual_inspections" if station == "postlam" else "final_inspections"
+
+            # 1. Sync immediately to Microsoft SQL Server
+            mssql_query = f"""
+            INSERT INTO {mssql_table} (Module_ID, Tested_At, Grade, Tester_Name)
             VALUES (?, SYSDATETIMEOFFSET(), ?, ?)
             """
-            mssql_success, mssql_engine = execute_mssql_insert(mssql_query, (module_id, grade, tester_name))
+            mssql_success, mssql_engine = execute_mssql_insert(mssql_query, (module_id, grade, tester_name), station=station)
 
             # 2. Persist to local SQLite (append grading event to preserve full audit log)
             with get_db() as local_conn:
                 local_cur = local_conn.cursor()
-                local_cur.execute("""
-                INSERT INTO final_inspections (module_id, grade, result_code, tester_name)
+                local_cur.execute(f"""
+                INSERT INTO {sqlite_table} (module_id, grade, result_code, tester_name)
                 VALUES (?, ?, ?, ?)
                 """, (module_id, grade, grade, tester_name))
                 local_conn.commit()
@@ -2230,11 +2497,11 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                 action = "Inserted grade into"
 
             dest_str = f"MSSQL ({mssql_engine})" if mssql_success else "SQLite (Local Cache)"
-            print(f"[DB Sync] {action} Final_Inspections [{dest_str}]: {module_id} -> Grade [{grade}] (Code: {grade}) by {tester_name} (Local ID #{record_id})")
+            print(f"[DB Sync] {action} {mssql_table} [{dest_str}]: {module_id} -> Grade [{grade}] (Code: {grade}) by {tester_name} (Local ID #{record_id})")
 
             # Store in recent inspections cache for de-duplication
             with _recent_inspections_lock:
-                _recent_inspections[module_id] = {
+                _recent_inspections[dedup_key] = {
                     "grade": grade,
                     "timestamp": now_ts,
                     "record_id": record_id,
@@ -2242,39 +2509,47 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                 }
 
             # 3. Advance Queue / Reset Conveyor State
-            mqtt_queue = [item for item in mqtt_queue if item.get("panel_id") != module_id]
-            if mqtt_queue:
-                next_panel = mqtt_queue.pop(0)
-                current_conveyor_panel = next_panel
-                active_main_screen_module = current_conveyor_panel.get("panel_id")
-                ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-                broadcast_sse("PANEL_ARRIVED", {
-                    "type": "MQTT_CONVEYOR_UPDATE",
-                    "module_id": current_conveyor_panel.get("panel_id"),
-                    "panel_id": current_conveyor_panel.get("panel_id"),
-                    "channel": current_conveyor_panel.get("channel", "CH88"),
-                    "ch88_serial": mqtt_channel_serials.get("CH88"),
-                    "ch89_serial": mqtt_channel_serials.get("CH89"),
-                    "current_panel": current_conveyor_panel,
-                    "queue": mqtt_queue,
-                    "timestamp": ts
-                })
+            if station == "postlam":
+                if active_main_screen_module_by_station.get("postlam") == module_id:
+                    active_main_screen_module_by_station["postlam"] = ""
             else:
-                # Clear active conveyor state so graded module is not reloaded on page refresh
-                if current_conveyor_panel.get("panel_id") == module_id:
-                    current_conveyor_panel = {
-                        "panel_id": "",
-                        "channel": "IDLE",
-                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                        "source": "Graded"
-                    }
-                if mqtt_channel_serials.get("CH88") == module_id:
-                    mqtt_channel_serials["CH88"] = None
-                if active_main_screen_module == module_id:
-                    active_main_screen_module = ""
+                mqtt_queue = [item for item in mqtt_queue if item.get("panel_id") != module_id]
+                if mqtt_queue:
+                    next_panel = mqtt_queue.pop(0)
+                    current_conveyor_panel = next_panel
+                    active_main_screen_module = current_conveyor_panel.get("panel_id")
+                    active_main_screen_module_by_station["fvi"] = active_main_screen_module or ""
+                    ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                    broadcast_sse("PANEL_ARRIVED", {
+                        "type": "MQTT_CONVEYOR_UPDATE",
+                        "module_id": current_conveyor_panel.get("panel_id"),
+                        "panel_id": current_conveyor_panel.get("panel_id"),
+                        "channel": current_conveyor_panel.get("channel", "CH88"),
+                        "ch88_serial": mqtt_channel_serials.get("CH88"),
+                        "ch89_serial": mqtt_channel_serials.get("CH89"),
+                        "current_panel": current_conveyor_panel,
+                        "queue": mqtt_queue,
+                        "timestamp": ts
+                    })
+                else:
+                    # Clear active conveyor state so graded module is not reloaded on page refresh
+                    if current_conveyor_panel.get("panel_id") == module_id:
+                        current_conveyor_panel = {
+                            "panel_id": "",
+                            "channel": "IDLE",
+                            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                            "source": "Graded"
+                        }
+                    if mqtt_channel_serials.get("CH88") == module_id:
+                        mqtt_channel_serials["CH88"] = None
+                    if active_main_screen_module == module_id:
+                        active_main_screen_module = ""
+                    if active_main_screen_module_by_station.get("fvi") == module_id:
+                        active_main_screen_module_by_station["fvi"] = ""
 
             self.send_json(200, {
                 "success": True,
+                "station": station,
                 "record_id": record_id,
                 "module_id": module_id,
                 "grade": grade,
@@ -2295,6 +2570,7 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                 next_panel = mqtt_queue.pop(0)
                 current_conveyor_panel = next_panel
                 active_main_screen_module = current_conveyor_panel.get("panel_id")
+                active_main_screen_module_by_station["fvi"] = active_main_screen_module or ""
                 ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 broadcast_sse("PANEL_ARRIVED", {
                     "type": "MQTT_CONVEYOR_UPDATE",
@@ -2338,9 +2614,10 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
             raw_cell = str(query.get("defect_location", [query.get("defect_cell", [query.get("cell_coord", [""])[0]])[0]])[0]).strip()
             defect_cell = "FRM" if raw_cell.upper() == "FRAME" else raw_cell[:4]
             side = str(query.get("side", [""])[0]).strip().lower()
+            body_json = {}
 
-            if not module_id or not defect_cell:
-                # Fallback: check if payload was passed in body
+            if not module_id or not defect_cell or not query.get("station"):
+                # Fallback: check if payload/station was passed in body
                 length = int(self.headers.get("Content-Length", 0))
                 if length > 0:
                     try:
@@ -2351,6 +2628,9 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
 
+            station = _resolve_station_mode(query_params=query, payload=body_json)
+            sqlite_table = "postlam_inspection_defects" if station == "postlam" else "final_inspection_defects"
+
             if not module_id or not defect_cell:
                 self.send_json(400, {"error": "Missing module_id or defect_cell for DELETE"})
                 return
@@ -2359,18 +2639,18 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                 cursor = local_conn.cursor()
                 if side:
                     cursor.execute(
-                        "DELETE FROM final_inspection_defects WHERE module_id = ? AND (defect_location = ? OR defect_cell = ?) AND LOWER(COALESCE(side, 'front')) = ?",
+                        f"DELETE FROM {sqlite_table} WHERE module_id = ? AND (defect_location = ? OR defect_cell = ?) AND LOWER(COALESCE(side, 'front')) = ?",
                         (module_id, defect_cell, defect_cell, side)
                     )
                 else:
                     cursor.execute(
-                        "DELETE FROM final_inspection_defects WHERE module_id = ? AND (defect_location = ? OR defect_cell = ?)",
+                        f"DELETE FROM {sqlite_table} WHERE module_id = ? AND (defect_location = ? OR defect_cell = ?)",
                         (module_id, defect_cell, defect_cell)
                     )
                 local_conn.commit()
 
-            print(f"[DB Local Delete] HTTP DELETE removed defect {defect_cell} ({side or 'any side'}) for module {module_id} from local cache.")
-            self.send_json(200, {"success": True, "deleted": defect_cell, "side": side})
+            print(f"[DB Local Delete] HTTP DELETE removed defect {defect_cell} ({side or 'any side'}) for module {module_id} from {sqlite_table}.")
+            self.send_json(200, {"success": True, "deleted": defect_cell, "side": side, "station": station})
             return
 
         self.send_json(404, {"error": "Endpoint not found"})
@@ -2378,22 +2658,57 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
 # ---------------------------------------------------------------------------
 # Server Launcher
 # ---------------------------------------------------------------------------
+def _apply_cli_args():
+    import argparse
+    parser = argparse.ArgumentParser(description="FVI / Post-Lam Inspection Edge Gateway Server")
+    parser.add_argument("--station", "--mode", dest="station", help="Lock station mode (fvi or postlam)")
+    parser.add_argument("--port", type=int, help="Override HTTP server port")
+    args, _ = parser.parse_known_args()
+    if args.station:
+        CONFIG["station_mode"] = _normalize_station(args.station)
+    if args.port:
+        CONFIG["port"] = args.port
+
+
+def _detect_lan_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.5)
+        s.connect(("10.1.19.75", 21))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except Exception:
+            return "127.0.0.1"
+
+
 def run_server():
+    _apply_cli_args()
     init_database()
     start_mqtt_listener()
     port = CONFIG["port"]
     server_address = (CONFIG["host"], port)
+    station_mode = _normalize_station(CONFIG.get("station_mode", "fvi"))
+    lan_ip = _detect_lan_ip()
     
     try:
         httpd = ThreadingHTTPServer(server_address, FVIEdgeHandler)
         print("=" * 68)
-        print(f"FVI STATION 01 — EDGE GATEWAY SERVER RUNNING ON PORT {port}")
-        print(f"Web Console URL: http://localhost:{port}")
+        print(f"FVI / POST-LAM — EDGE GATEWAY SERVER RUNNING ON PORT {port} (Default Mode: {station_mode.upper()})")
+        print(f"FVI Console URL:      http://{lan_ip}:{port}/")
+        print(f"Post-Lam Tablet URL:  http://{lan_ip}:{port}/postlam")
+        print(f"Post-Lam Monitor 2:   http://{lan_ip}:{port}/postlam/second")
         print("  - CMMS Auth Database: Ready (SQLite / CMMS connector)")
-        print(f"  - Final Inspection MSSQL: {'Active' if CONFIG['mssql']['enabled'] else 'Offline Fallback'} (Server={CONFIG['mssql']['server']};Database={CONFIG['mssql']['database']})")
-        print("  - Instant Defect DB Sync: Active (dbo.Final_Inspection_Defects)")
-        print("  - Conveyor MQTT Listener: Active (Topic: factory/conveyor/fvi/...)")
-        print(f"  - EL Camera PC FTP Fetcher: {'Configured' if CONFIG['ftp']['enabled'] else 'Disabled'} ({CONFIG['ftp']['host']}:{CONFIG['ftp']['port']})")
+        print(f"  - MSSQL Production: {'Active' if CONFIG['mssql']['enabled'] else 'Offline Fallback'} (Server={CONFIG['mssql']['server']};Database={CONFIG['mssql']['database']})")
+        print("  - Instant Defect DB Sync: dbo.Final_Inspection_Defects & dbo.PostLam_Inspection_Defects")
+        print("  - Conveyor MQTT Listener: Active (Topic: usm/cstx/prod/line2/#)")
+        print(f"  - FVI FTP Fetcher: {'Configured' if CONFIG['ftp']['enabled'] else 'Disabled'} ({CONFIG['ftp']['host']}:{CONFIG['ftp']['port']})")
+        pl_ftp = CONFIG["ftp_postlam"]
+        pl_hosts = ", ".join(pl_ftp.get("hosts") or ([pl_ftp["host"]] if pl_ftp.get("host") else ["Pending Credentials"]))
+        print(f"  - Post-Lam FTP Fetcher: {'Configured' if pl_ftp['enabled'] else 'Disabled'} ({pl_hosts}:{pl_ftp['port']})")
         print("=" * 68)
         httpd.serve_forever()
     except OSError as e:
@@ -2401,7 +2716,7 @@ def run_server():
             print(f"[Notice] Port {port} is occupied. Trying alternative port 5000...")
             CONFIG["port"] = 5000
             httpd = ThreadingHTTPServer((CONFIG["host"], 5000), FVIEdgeHandler)
-            print(f"FVI Edge Gateway running on http://localhost:5000")
+            print(f"FVI Edge Gateway running on http://{lan_ip}:5000")
             httpd.serve_forever()
         else:
             raise e

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </linearGradient>
+    <linearGradient id="cell" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0ea5e9"/>
+      <stop offset="100%" stop-color="#0369a1"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <rect x="64" y="96" width="384" height="320" rx="20" fill="#1e293b" stroke="#38bdf8" stroke-width="12"/>
+  <rect x="88" y="120" width="102" height="126" rx="6" fill="url(#cell)"/>
+  <rect x="205" y="120" width="102" height="126" rx="6" fill="url(#cell)"/>
+  <rect x="322" y="120" width="102" height="126" rx="6" fill="url(#cell)"/>
+  <rect x="88" y="266" width="102" height="126" rx="6" fill="url(#cell)"/>
+  <rect x="205" y="266" width="102" height="126" rx="6" fill="url(#cell)"/>
+  <rect x="322" y="266" width="102" height="126" rx="6" fill="url(#cell)"/>
+  <circle cx="384" cy="368" r="72" fill="#f59e0b" stroke="#0f172a" stroke-width="14"/>
+  <path d="M352 368l22 22 44-46" fill="none" stroke="#0f172a" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

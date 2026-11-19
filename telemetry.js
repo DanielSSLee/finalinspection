@@ -14,6 +14,7 @@
 
   // Application State
   const state = {
+    stationMode: 'fvi',
     moduleId: '',
     loadedElModuleId: '',
     sunsimData: null,
@@ -24,6 +25,46 @@
     elZoomOriginX: 50,
     elZoomOriginY: 50
   };
+
+  function detectStationMode() {
+    const locked = String(window.__LOCKED_STATION_MODE__ || '').trim().toLowerCase();
+    if (locked === 'postlam' || locked === 'post_lam' || locked === 'pl') {
+      state.stationMode = 'postlam';
+      return state.stationMode;
+    }
+    const pathLower = ((window.location && window.location.pathname) || '').toLowerCase();
+    if (pathLower === '/postlam' || pathLower.startsWith('/postlam/')) {
+      state.stationMode = 'postlam';
+      return state.stationMode;
+    }
+    const urlParams = new URLSearchParams(window.location.search);
+    const qStation = String(urlParams.get('station') || urlParams.get('mode') || '').trim().toLowerCase();
+    state.stationMode = (qStation === 'postlam' || qStation === 'post_lam' || qStation === 'pl') ? 'postlam' : 'fvi';
+    return state.stationMode;
+  }
+
+  function applyStationModeUI() {
+    if (state.stationMode === 'postlam') {
+      document.body.classList.add('station-postlam');
+      document.title = 'Post-Lam Station — Monitor 2: EL1 Imagery & Telemetry';
+      const brandTitle = document.querySelector('.brand-title');
+      if (brandTitle) {
+        brandTitle.textContent = 'POST-LAM MONITOR 2 \u2014 EL1 IMAGERY & TELEMETRY';
+      }
+      const brandBadge = document.querySelector('.brand-badge');
+      if (brandBadge) {
+        brandBadge.textContent = 'POST-LAM M2';
+      }
+    }
+  }
+
+  function getActiveStorageKey() {
+    return state.stationMode === 'postlam' ? 'fvi_active_module_id_postlam' : 'fvi_active_module_id';
+  }
+
+  function getStationQuery() {
+    return `station=${encodeURIComponent(state.stationMode)}`;
+  }
 
   // Cached DOM Elements
   let dom = {};
@@ -97,7 +138,7 @@
         retried = true;
         setTimeout(() => {
           if (state.moduleId === moduleId) {
-            dom.elSingleImg.src = `/api/module/${encodeURIComponent(moduleId)}/el-image?side=front&_t=${Date.now()}`;
+            dom.elSingleImg.src = `/api/module/${encodeURIComponent(moduleId)}/el-image?side=front&${getStationQuery()}&_t=${Date.now()}`;
           }
         }, 400);
         return;
@@ -120,8 +161,8 @@
 
     const bustParam = `&_t=${Date.now()}${forceBust ? '&refresh=1' : ''}`;
     const targetSrc = elUrl
-      ? (elUrl.includes('?') ? `${elUrl}${bustParam}` : `${elUrl}?${bustParam.slice(1)}`)
-      : (`/api/module/${encodeURIComponent(moduleId)}/el-image?side=front${bustParam}`);
+      ? (elUrl.includes('?') ? `${elUrl}&${getStationQuery()}${bustParam}` : `${elUrl}?${getStationQuery()}${bustParam}`)
+      : (`/api/module/${encodeURIComponent(moduleId)}/el-image?side=front&${getStationQuery()}${bustParam}`);
 
     dom.elSingleImg.src = targetSrc;
   }
@@ -277,6 +318,72 @@
 
     dom.elSingleViewport.addEventListener('dblclick', () => {
       resetElZoom();
+    });
+
+    // Touch pinch-to-zoom, 1-finger pan, and double-tap reset
+    let pinchStartDist = 0;
+    let pinchStartScale = 1;
+    let panActive = false;
+    let panLastX = 0;
+    let panLastY = 0;
+    let lastTapAt = 0;
+    const getTouchDist = (t1, t2) => Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+
+    dom.elSingleViewport.style.touchAction = 'none';
+    dom.elSingleViewport.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        pinchStartDist = getTouchDist(e.touches[0], e.touches[1]);
+        pinchStartScale = state.elZoomScale;
+        setElZoomOriginFromEvent({
+          clientX: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+          clientY: (e.touches[0].clientY + e.touches[1].clientY) / 2
+        });
+      } else if (e.touches.length === 1) {
+        const now = Date.now();
+        if (now - lastTapAt < 280) {
+          e.preventDefault();
+          resetElZoom();
+          lastTapAt = 0;
+          return;
+        }
+        lastTapAt = now;
+        if (state.elZoomScale > 1) {
+          panActive = true;
+          panLastX = e.touches[0].clientX;
+          panLastY = e.touches[0].clientY;
+        }
+      }
+    }, { passive: false });
+
+    dom.elSingleViewport.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 2 && pinchStartDist > 0) {
+        e.preventDefault();
+        const dist = getTouchDist(e.touches[0], e.touches[1]);
+        state.elZoomScale = Math.round(Math.max(1.0, Math.min(6.0, pinchStartScale * (dist / pinchStartDist))) * 100) / 100;
+        setElZoomOriginFromEvent({
+          clientX: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+          clientY: (e.touches[0].clientY + e.touches[1].clientY) / 2
+        });
+        applyElZoom();
+      } else if (e.touches.length === 1 && panActive && state.elZoomScale > 1) {
+        e.preventDefault();
+        const rect = dom.elSingleViewport.getBoundingClientRect();
+        const dx = e.touches[0].clientX - panLastX;
+        const dy = e.touches[0].clientY - panLastY;
+        panLastX = e.touches[0].clientX;
+        panLastY = e.touches[0].clientY;
+        if (rect.width > 0 && rect.height > 0) {
+          state.elZoomOriginX = Math.max(-18, Math.min(118, state.elZoomOriginX - (dx / rect.width) * 100));
+          state.elZoomOriginY = Math.max(-18, Math.min(118, state.elZoomOriginY - (dy / rect.height) * 100));
+          applyElZoom();
+        }
+      }
+    }, { passive: false });
+
+    dom.elSingleViewport.addEventListener('touchend', (e) => {
+      if (e.touches.length < 2) pinchStartDist = 0;
+      if (e.touches.length === 0) panActive = false;
     });
 
     if (dom.btnResetElZoom) {
@@ -748,22 +855,24 @@
     updateSingleElImage(cleanMod, null, null, forceBust);
 
     // 1. Try `/api/telemetry?module_id=...`
+    const elEndpoint = state.stationMode === 'postlam' ? '/api/telemetry/el1' : '/api/telemetry/el2';
     try {
       const bust = forceBust ? `&_t=${Date.now()}` : '';
-      const res = await fetch(`/api/telemetry?module_id=${encodeURIComponent(cleanMod)}${bust}`);
+      const res = await fetch(`/api/telemetry?module_id=${encodeURIComponent(cleanMod)}&${getStationQuery()}${bust}`);
       if (res.ok) {
         const data = await res.json();
-        const folderStatus = data.el_folder || (data.el2 && data.el2.folder_status) || '';
-        const imgPath = (data.el2 && data.el2.image_path) || '';
+        const elMeta = data.el1 || data.el2 || {};
+        const folderStatus = data.el_folder || elMeta.folder_status || '';
+        const imgPath = elMeta.image_path || '';
         if (folderStatus || imgPath) {
           if (state.moduleId === cleanMod) {
             renderElFolderStatus(folderStatus, imgPath);
           }
         } else {
-          fetch(`/api/telemetry/el2?module_id=${encodeURIComponent(cleanMod)}`)
+          fetch(`${elEndpoint}?module_id=${encodeURIComponent(cleanMod)}`)
             .then(r => r.ok ? r.json() : null)
-            .then(el2Data => {
-              if (state.moduleId === cleanMod && el2Data) renderElFolderStatus(el2Data.folder_status, el2Data.image_path);
+            .then(elData => {
+              if (state.moduleId === cleanMod && elData) renderElFolderStatus(elData.folder_status, elData.image_path);
             })
             .catch(() => {});
         }
@@ -783,17 +892,17 @@
       console.warn('[Telemetry] /api/telemetry fetch notice:', e);
     }
 
-    // Also try fetching EL2 metadata directly for folder status on fallback paths
-    fetch(`/api/telemetry/el2?module_id=${encodeURIComponent(cleanMod)}`)
+    // Also try fetching EL1/EL2 metadata directly for folder status on fallback paths
+    fetch(`${elEndpoint}?module_id=${encodeURIComponent(cleanMod)}`)
       .then(r => r.ok ? r.json() : null)
-      .then(el2Data => {
-        if (state.moduleId === cleanMod && el2Data) renderElFolderStatus(el2Data.folder_status, el2Data.image_path);
+      .then(elData => {
+        if (state.moduleId === cleanMod && elData) renderElFolderStatus(elData.folder_status, elData.image_path);
       })
       .catch(() => {});
 
     // 2. Try `/api/telemetry/all?module_id=...`
     try {
-      const resAll = await fetch(`/api/telemetry/all?module_id=${encodeURIComponent(cleanMod)}`);
+      const resAll = await fetch(`/api/telemetry/all?module_id=${encodeURIComponent(cleanMod)}&${getStationQuery()}`);
       if (resAll.ok) {
         const data = await resAll.json();
         const sunsim = data.sunsim || data.sun_simulator;
@@ -837,12 +946,19 @@
   // =========================================================================
   // 6. Real-time Multi-Vector Synchronization Engine (Locked to Screen 1 Active Module)
   // =========================================================================
+  function matchesStationScope(msgStation) {
+    if (!msgStation) {
+      return state.stationMode === 'fvi';
+    }
+    return String(msgStation).trim().toLowerCase() === state.stationMode;
+  }
+
   function initLiveSync() {
     // Vector 1: BroadcastChannel 'fvi_DualScreen_Sync'
     try {
       const dualScreenChannel = new BroadcastChannel('fvi_DualScreen_Sync');
       dualScreenChannel.onmessage = (event) => {
-        if (!event.data) return;
+        if (!event.data || !matchesStationScope(event.data.station)) return;
         const modId = event.data.moduleId || event.data.panel_id || event.data.serialNumber;
         const cleanId = String(modId || '').trim().toUpperCase();
         if (cleanId.length === 16 && cleanId.startsWith('USM') && cleanId !== state.moduleId) {
@@ -858,7 +974,7 @@
     try {
       const stationChannel = new BroadcastChannel('fvi_station_sync');
       stationChannel.onmessage = (event) => {
-        if (!event.data) return;
+        if (!event.data || !matchesStationScope(event.data.station)) return;
         const modId = event.data.moduleId || event.data.panel_id;
         const cleanId = String(modId || '').trim().toUpperCase();
         if (cleanId.length === 16 && cleanId.startsWith('USM') && cleanId !== state.moduleId) {
@@ -872,7 +988,9 @@
 
     // Vector 3: LocalStorage 'storage' event listener
     window.addEventListener('storage', (event) => {
-      if (event.key === 'fvi_active_module_id' || event.key === 'fvi_module_id' || event.key === 'fvi_cmms_module') {
+      const targetKey = getActiveStorageKey();
+      const legacyFviMatch = state.stationMode === 'fvi' && (event.key === 'fvi_module_id' || event.key === 'fvi_cmms_module');
+      if (event.key === targetKey || legacyFviMatch) {
         const newMod = event.newValue;
         const cleanId = String(newMod || '').trim().toUpperCase();
         if (cleanId.length === 16 && cleanId.startsWith('USM') && cleanId !== state.moduleId) {
@@ -886,40 +1004,42 @@
     if (typeof EventSource !== 'undefined') {
       try {
         const sse = new EventSource('/api/stream');
-        const handleSyncEvent = (rawData) => {
+        const handleSyncEvent = (rawData, isConveyorArrival = false) => {
           try {
             const data = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
             if (!data) return;
+            if (isConveyorArrival && state.stationMode === 'postlam') return;
+            if (!matchesStationScope(data.station)) return;
             const rawId = data.module_id || data.panel_id || (data.current_panel && data.current_panel.panel_id);
             const cleanId = String(rawId || '').trim().toUpperCase();
             if (cleanId.length === 16 && cleanId.startsWith('USM')) {
-              try { localStorage.setItem('fvi_active_module_id', cleanId); } catch (e) { }
+              try { localStorage.setItem(getActiveStorageKey(), cleanId); } catch (e) { }
               loadTelemetryForModule(cleanId);
             }
           } catch (e) { }
         };
-        sse.addEventListener('ACTIVE_MODULE_SYNC', (event) => handleSyncEvent(event.data));
-        sse.addEventListener('PANEL_ARRIVED', (event) => handleSyncEvent(event.data));
-        sse.onmessage = (event) => handleSyncEvent(event.data);
+        sse.addEventListener('ACTIVE_MODULE_SYNC', (event) => handleSyncEvent(event.data, false));
+        sse.addEventListener('PANEL_ARRIVED', (event) => handleSyncEvent(event.data, true));
+        sse.onmessage = (event) => handleSyncEvent(event.data, true);
       } catch (e) { }
     }
 
     // Vector 5: Reliable Polling cross-check (Guarantees cross-screen sync without ping-pong)
     setInterval(async () => {
       try {
-        const res = await fetch('/api/module/active');
+        const res = await fetch(`/api/module/active?${getStationQuery()}`);
         if (res.ok) {
           const data = await res.json();
           const serverActive = String(data.module_id || data.panel_id || '').trim().toUpperCase();
           if (serverActive.length === 16 && serverActive.startsWith('USM')) {
             if (serverActive !== state.moduleId) {
-              try { localStorage.setItem('fvi_active_module_id', serverActive); } catch (e) { }
+              try { localStorage.setItem(getActiveStorageKey(), serverActive); } catch (e) { }
               loadTelemetryForModule(serverActive);
             }
             return;
           }
         }
-        const localActive = String(localStorage.getItem('fvi_active_module_id') || '').trim().toUpperCase();
+        const localActive = String(localStorage.getItem(getActiveStorageKey()) || '').trim().toUpperCase();
         if (localActive.length === 16 && localActive.startsWith('USM') && localActive !== state.moduleId) {
           loadTelemetryForModule(localActive);
         }
@@ -931,6 +1051,8 @@
   // 7. Initialization
   // =========================================================================
   async function init() {
+    detectStationMode();
+    applyStationModeUI();
     queryDom();
     buildElAxes();
     initElZoom();
@@ -943,10 +1065,10 @@
         dom.btnRefreshTelemetry.classList.add('spinning');
         try {
           // Check localStorage or active module endpoint
-          let targetMod = state.moduleId || localStorage.getItem('fvi_active_module_id');
+          let targetMod = state.moduleId || localStorage.getItem(getActiveStorageKey());
           if (!targetMod) {
             try {
-              const res = await fetch('/api/module/active');
+              const res = await fetch(`/api/module/active?${getStationQuery()}`);
               if (res.ok) {
                 const data = await res.json();
                 targetMod = data.module_id || data.panel_id;
@@ -965,7 +1087,7 @@
     }
 
     // Check localStorage first
-    const savedActive = String(localStorage.getItem('fvi_active_module_id') || '').trim().toUpperCase();
+    const savedActive = String(localStorage.getItem(getActiveStorageKey()) || '').trim().toUpperCase();
     if (savedActive.length === 16 && savedActive.startsWith('USM')) {
       loadTelemetryForModule(savedActive);
       return;
@@ -981,7 +1103,7 @@
 
     // Otherwise fetch from /api/module/active
     try {
-      const res = await fetch('/api/module/active');
+      const res = await fetch(`/api/module/active?${getStationQuery()}`);
       if (res.ok) {
         const data = await res.json();
         const activeId = String(data.module_id || data.panel_id || '').trim().toUpperCase();

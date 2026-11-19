@@ -2172,3 +2172,214 @@ body.theme-industrial {
   border-color: #ef4444;
   color: #ffffff;
 }
+
+/* Post-Lam Station Mode: No Framer (FRM) and No Junction Box (JBX1/2/3) */
+body.station-postlam .uniform-frame-zone,
+body.station-postlam .jbox-zone,
+body.station-postlam .legend-frame,
+body.station-postlam .legend-jbox {
+  display: none !important;
+  pointer-events: none !important;
+}
+
+body.station-postlam .queue-channel-badge {
+  background: rgba(245, 158, 11, 0.16);
+  border-color: rgba(245, 158, 11, 0.5);
+  color: #fbbf24;
+}
+
+/* Post-Lam Embedded EL1 Viewer Card (Visible on Android Tablet / Single-Screen Post-Lam Mode) */
+body.station-postlam #card-postlam-el {
+  display: flex !important;
+}
+
+body.station-postlam .vertical-inspection-stack {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+body.station-postlam .front-card,
+body.station-postlam .back-card {
+  flex-shrink: 0;
+}
+
+.tag-el {
+  background: rgba(6, 182, 212, 0.18);
+  color: #22d3ee;
+  border: 1px solid rgba(6, 182, 212, 0.45);
+}
+
+.el-folder-badge {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  padding: 2px 9px;
+  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.14);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  color: #94a3b8;
+}
+
+.el-folder-badge.ok {
+  background: rgba(16, 185, 129, 0.22);
+  border-color: #10b981;
+  color: #34d399;
+}
+
+.el-folder-badge.ng {
+  background: rgba(244, 63, 94, 0.24);
+  border-color: #f43f5e;
+  color: #fb7185;
+}
+
+.el-machine-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  color: #7dd3fc;
+}
+
+.el-zoom-badge {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: #22d3ee;
+  background: rgba(6, 182, 212, 0.15);
+  border: 1px solid rgba(6, 182, 212, 0.5);
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.postlam-el-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.postlam-el-body {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  user-select: none;
+}
+
+.postlam-el-axis-x {
+  margin-right: 26px;
+  margin-bottom: 2px;
+  height: 18px;
+  display: grid;
+  grid-template-columns: repeat(12, 1fr) 0.22fr repeat(12, 1fr);
+}
+
+.postlam-el-axis-cell-x {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+
+.postlam-el-axis-cell-x.highlight {
+  color: #22d3ee;
+  font-weight: 800;
+}
+
+.postlam-el-stage-and-y {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+}
+
+.postlam-el-viewport {
+  position: relative;
+  flex: 1 1 auto;
+  aspect-ratio: 2.15 / 1;
+  min-height: 220px;
+  background: #000000;
+  border: 1px solid var(--border-medium);
+  border-radius: 6px;
+  overflow: hidden;
+  touch-action: none;
+  cursor: zoom-in;
+}
+
+.postlam-el-viewport.is-zoomed {
+  cursor: grab;
+}
+
+.postlam-el-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  transform-origin: 50% 50%;
+  transition: transform 0.05s linear;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.postlam-el-axis-y {
+  width: 24px;
+  margin-left: 2px;
+  display: grid;
+  grid-template-rows: repeat(6, 1fr);
+  flex-shrink: 0;
+}
+
+.postlam-el-axis-cell-y {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+
+.postlam-el-axis-cell-y.highlight {
+  color: #22d3ee;
+  font-weight: 800;
+}
+
+.postlam-el-loading {
+  position: absolute;
+  inset: 0;
+  background: rgba(11, 15, 25, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #e2e8f0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+@media (max-width: 960px) {
+  body.station-postlam .console-header {
+    flex-wrap: wrap;
+    height: auto;
+    gap: 8px;
+    padding: 8px 10px;
+  }
+
+  body.station-postlam .outline-card-header {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  body.station-postlam .grade-toggle {
+    min-height: 40px;
+    padding: 4px 10px;
+  }
+
+  body.station-postlam .postlam-el-viewport {
+    min-height: 200px;
+  }
+}
