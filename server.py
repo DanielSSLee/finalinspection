@@ -137,13 +137,17 @@ CONFIG = {
         "enabled": _env_bool("POSTLAM_FTP_ENABLED", True)
     },
 
-    # 3. Conveyor Arrival Sensor via MQTT (Line 2 Conveyors CH88 & CH89)
+    # 3. Conveyor Arrival Sensor & PLC Release via MQTT (Line 2 Conveyors CH88)
     "mqtt": {
         "broker": _env_str("MQTT_BROKER", "100.100.0.17") if _env_str("MQTT_BROKER", "100.100.0.17") not in ("localhost", "100.100.100.60") else "100.100.0.17",
         "port": _env_int("MQTT_PORT", 1883),
         "username": _env_str("MQTT_USERNAME", "line2-equipment") or "line2-equipment",
         "password": _env_str("MQTT_PASSWORD", "3cwDa4Lf6NZH2u") or "3cwDa4Lf6NZH2u",
         "topic": _env_str("MQTT_TOPIC", "usm/cstx/prod/line2/#") if "line2" in _env_str("MQTT_TOPIC", "") else "usm/cstx/prod/line2/#",
+        "cmd_topic": _env_str("MQTT_CMD_TOPIC", "usm/cstx/prod/line2/CH88/cmd"),
+        "auto_send_on_grade": _env_bool("MQTT_AUTO_SEND_ON_GRADE", True),
+        "send_pulse_sec": float(_env_str("MQTT_SEND_PULSE_SEC", "1.5") or 1.5),
+        "send_cooldown_sec": float(_env_str("MQTT_SEND_COOLDOWN_SEC", "8.0") or 8.0),
         "enabled": _env_bool("MQTT_ENABLED", True)
     },
 
@@ -580,6 +584,13 @@ prefetched_telemetry = {}  # panel_id -> {"sunsim": ..., "hipot": ..., "el_image
 _initial_conveyor_seeded = False
 _recent_inspections_lock = threading.Lock()
 _recent_inspections = {}  # (station, module_id) -> {"grade": grade, "timestamp": float, "record_id": int, "engine": str}
+_mqtt_sock_lock = threading.Lock()
+_active_mqtt_sock = None
+_conveyor_send_lock = threading.Lock()
+_last_conveyor_send_time = 0.0
+_last_sent_module_id = ""
+_send_pulse_active = False
+_send_pulse_gen = 0
 
 # Defect Code to IEC Type ID (int2)
 DEFECT_CODE_TO_ID = {
@@ -1416,6 +1427,7 @@ def handle_conveyor_serial_arrival(serial, channel="CH88"):
     sets active module directly (no queueing), and broadcasts SSE updates.
     """
     global current_conveyor_panel, mqtt_channel_serials, mqtt_queue, active_main_screen_module
+    global _send_pulse_active, _send_pulse_gen
 
     if str(channel).upper() not in ("CH88", "88", "MQTT"):
         return
@@ -1433,6 +1445,23 @@ def handle_conveyor_serial_arrival(serial, channel="CH88"):
 
     print(f"[MQTT Conveyor] New serial arrived on CH88: {clean_serial} (Previous: {last_serial})")
     mqtt_channel_serials["CH88"] = clean_serial
+
+    # Safety Interlock Layer 3: Cancel any active SEND=1 pulse immediately when the next module reaches CH88
+    should_force_reset = False
+    with _conveyor_send_lock:
+        _send_pulse_gen += 1
+        if _send_pulse_active:
+            _send_pulse_active = False
+            should_force_reset = True
+    if should_force_reset:
+        cmd_topic = CONFIG["mqtt"].get("cmd_topic", "usm/cstx/prod/line2/CH88/cmd")
+        threading.Thread(
+            target=publish_mqtt_message,
+            args=(cmd_topic, {"SEND": 0}),
+            daemon=True
+        ).start()
+        print(f"[MQTT PLC] Force-reset SEND=0 on {cmd_topic} due to new CH88 arrival: {clean_serial}")
+
     ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     # 1. Background pre-fetch all telemetry & FTP image
@@ -1537,8 +1566,133 @@ def _build_subscribe_packet(packet_id, topics):
     remaining = var_header + bytes(payload)
     return bytes([0x82]) + _encode_remaining_length(len(remaining)) + remaining
 
+def _build_publish_packet(topic_str, payload_str):
+    # Standard QoS 0 non-retained PUBLISH (0x30)
+    t_bytes = topic_str.encode("utf-8")
+    p_bytes = payload_str.encode("utf-8")
+    remaining = struct.pack(">H", len(t_bytes)) + t_bytes + p_bytes
+    return bytes([0x30]) + _encode_remaining_length(len(remaining)) + remaining
+
+def publish_mqtt_message(topic_str, payload_dict):
+    """
+    Publishes a JSON payload to the plant MQTT broker (QoS 0, non-retained).
+    Uses the active listener socket when connected, or falls back to a short-lived TCP connection.
+    """
+    payload_str = json.dumps(payload_dict) if isinstance(payload_dict, dict) else str(payload_dict)
+    pkt = _build_publish_packet(topic_str, payload_str)
+
+    # 1. Try active persistent socket first
+    with _mqtt_sock_lock:
+        if _active_mqtt_sock is not None:
+            try:
+                _active_mqtt_sock.sendall(pkt)
+                return True
+            except Exception as e:
+                print(f"[MQTT Publish Notice] Active socket publish failed, using fallback socket: {e}")
+
+    # 2. Fallback: short-lived direct connection
+    mqtt_cfg = CONFIG.get("mqtt", {})
+    if not mqtt_cfg.get("enabled", False):
+        return False
+
+    broker = mqtt_cfg.get("broker", "100.100.0.17")
+    port = int(mqtt_cfg.get("port", 1883))
+    username = mqtt_cfg.get("username", "line2-equipment")
+    password = mqtt_cfg.get("password", "3cwDa4Lf6NZH2u")
+    sock = None
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(4.0)
+        sock.connect((broker, port))
+        cid = f"fvi-cmd-{int(time.time() * 1000) % 100000}"
+        sock.sendall(_build_connect_packet(cid, username, password, keepalive=30))
+        hdr = sock.recv(1)
+        if not hdr or hdr[0] != 0x20:
+            return False
+        rem_len = _recv_remaining_length(sock)
+        ack_body = _recv_exact(sock, rem_len)
+        if len(ack_body) < 2 or ack_body[1] != 0:
+            return False
+        sock.sendall(pkt)
+        try:
+            sock.sendall(b"\xe0\x00")  # DISCONNECT
+        except Exception:
+            pass
+        return True
+    except Exception as e:
+        print(f"[MQTT Publish Error] Failed publishing to {topic_str} ({broker}:{port}): {e}")
+        return False
+    finally:
+        if sock is not None:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+def trigger_conveyor_send_pulse(module_id):
+    """
+    Pulses {"SEND": 1} -> {"SEND": 0} on CONFIG['mqtt']['cmd_topic'] after grading an FVI module,
+    enforcing one-send-per-serial and a travel buffer cooldown so incoming modules are not prematurely sent.
+    """
+    global _last_conveyor_send_time, _last_sent_module_id, _send_pulse_active, _send_pulse_gen
+
+    mqtt_cfg = CONFIG.get("mqtt", {})
+    if not mqtt_cfg.get("enabled", False):
+        return False, "MQTT_DISABLED"
+    if not mqtt_cfg.get("auto_send_on_grade", True):
+        return False, "AUTO_SEND_DISABLED"
+
+    cmd_topic = mqtt_cfg.get("cmd_topic", "usm/cstx/prod/line2/CH88/cmd")
+    pulse_sec = max(0.2, float(mqtt_cfg.get("send_pulse_sec", 1.5)))
+    cooldown_sec = max(pulse_sec, float(mqtt_cfg.get("send_cooldown_sec", 8.0)))
+    clean_mod = str(module_id or "").strip().upper()
+
+    with _conveyor_send_lock:
+        now = time.time()
+        # Layer 1: One-send-per-serial interlock
+        if clean_mod and clean_mod == _last_sent_module_id:
+            print(f"[MQTT PLC] Conveyor send blocked for {clean_mod}: ALREADY_SENT_FOR_MODULE")
+            return False, "ALREADY_SENT_FOR_MODULE"
+
+        # Layer 2: Travel buffer cooldown
+        elapsed = now - _last_conveyor_send_time
+        if _last_conveyor_send_time > 0 and elapsed < cooldown_sec:
+            remaining = cooldown_sec - elapsed
+            status = f"BUFFER_COOLDOWN_ACTIVE ({remaining:.1f}s left)"
+            print(f"[MQTT PLC] Conveyor send blocked for {clean_mod}: {status}")
+            return False, status
+
+        _last_conveyor_send_time = now
+        _last_sent_module_id = clean_mod
+        _send_pulse_active = True
+        _send_pulse_gen += 1
+        my_gen = _send_pulse_gen
+
+    def _pulse_worker():
+        global _send_pulse_active
+        try:
+            ok1 = publish_mqtt_message(cmd_topic, {"SEND": 1})
+            print(f"[MQTT PLC] Sent {{\"SEND\": 1}} -> {cmd_topic} for {clean_mod} (ok={ok1}, pulse={pulse_sec}s)")
+            deadline = time.time() + pulse_sec
+            while time.time() < deadline:
+                with _conveyor_send_lock:
+                    if _send_pulse_gen != my_gen:
+                        return
+                time.sleep(0.1)
+        finally:
+            with _conveyor_send_lock:
+                still_mine = (_send_pulse_gen == my_gen)
+                if still_mine:
+                    _send_pulse_active = False
+            if still_mine:
+                ok0 = publish_mqtt_message(cmd_topic, {"SEND": 0})
+                print(f"[MQTT PLC] Sent {{\"SEND\": 0}} -> {cmd_topic} for {clean_mod} (ok={ok0})")
+
+    threading.Thread(target=_pulse_worker, daemon=True).start()
+    return True, f"PULSE_SENT ({pulse_sec:.1f}s)"
+
 def _run_socket_mqtt_listener():
-    global mqtt_connected
+    global mqtt_connected, _active_mqtt_sock
     broker = CONFIG["mqtt"].get("broker", "100.100.0.17")
     port = CONFIG["mqtt"].get("port", 1883)
     username = CONFIG["mqtt"].get("username", "line2-equipment")
@@ -1574,13 +1728,16 @@ def _run_socket_mqtt_listener():
                 ret_code = ack_body[1] if len(ack_body) >= 2 else -1
                 raise ConnectionRefusedError(f"MQTT connection refused by broker (code: {ret_code})")
 
+            with _mqtt_sock_lock:
+                _active_mqtt_sock = sock
             mqtt_connected = True
             print(f"[MQTT] Connected successfully to plant broker {broker}:{port}!")
 
             # 3. Send SUBSCRIBE for CH88
             sub_pkt = _build_subscribe_packet(packet_id, topics_to_sub)
             packet_id = (packet_id + 1) & 0xFFFF or 1
-            sock.sendall(sub_pkt)
+            with _mqtt_sock_lock:
+                sock.sendall(sub_pkt)
             print(f"[MQTT] Subscribed to Line 2 conveyor topic: CH88")
 
             last_ping = time.time()
@@ -1591,7 +1748,8 @@ def _run_socket_mqtt_listener():
                 # Keepalive PINGREQ every 20 seconds
                 if now - last_ping >= 20.0:
                     try:
-                        sock.sendall(b"\xc0\x00")
+                        with _mqtt_sock_lock:
+                            sock.sendall(b"\xc0\x00")
                         last_ping = now
                     except Exception as pe:
                         print(f"[MQTT Ping Error] {pe}")
@@ -1634,11 +1792,12 @@ def _run_socket_mqtt_listener():
                             pkt_id_bytes = body[offset:offset+2]
                             offset += 2
                             if qos == 1:
-                                sock.sendall(b"\x40\x02" + pkt_id_bytes)
+                                with _mqtt_sock_lock:
+                                    sock.sendall(b"\x40\x02" + pkt_id_bytes)
                         msg_payload = body[offset:]
 
                         topic_upper = topic_str.upper()
-                        if "CH88" in topic_upper or topic_upper.endswith("88"):
+                        if ("CH88" in topic_upper or topic_upper.endswith("88")) and not topic_upper.endswith("/CMD"):
                             channel = "CH88"
                             serial = extract_serial_from_payload(msg_payload)
                             if serial:
@@ -1651,6 +1810,9 @@ def _run_socket_mqtt_listener():
             print(f"[MQTT Listener] Connection notice ({broker}:{port}): {e}. Retrying in 5s...")
         finally:
             mqtt_connected = False
+            with _mqtt_sock_lock:
+                if _active_mqtt_sock is sock:
+                    _active_mqtt_sock = None
             if sock:
                 try:
                     sock.close()
@@ -2508,7 +2670,9 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                     "engine": mssql_engine if mssql_success else "SQLITE_LOCAL"
                 }
 
-            # 3. Advance Queue / Reset Conveyor State
+            # 3. Advance Queue / Reset Conveyor State & Trigger PLC Release
+            conveyor_sent = False
+            conveyor_send_status = "NOT_APPLICABLE"
             if station == "postlam":
                 if active_main_screen_module_by_station.get("postlam") == module_id:
                     active_main_screen_module_by_station["postlam"] = ""
@@ -2547,6 +2711,8 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                     if active_main_screen_module_by_station.get("fvi") == module_id:
                         active_main_screen_module_by_station["fvi"] = ""
 
+                conveyor_sent, conveyor_send_status = trigger_conveyor_send_pulse(module_id)
+
             self.send_json(200, {
                 "success": True,
                 "station": station,
@@ -2557,6 +2723,8 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                 "tester_name": tester_name,
                 "mssql_synced": mssql_success,
                 "engine": mssql_engine if mssql_success else "SQLITE_LOCAL",
+                "conveyor_sent": conveyor_sent,
+                "conveyor_send_status": conveyor_send_status,
                 "next_module": current_conveyor_panel,
                 "current_panel": current_conveyor_panel,
                 "queue": mqtt_queue,

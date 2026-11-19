@@ -167,7 +167,7 @@ The console supports both **Final Visual Inspection (`fvi`)** and **Post-Lam Vis
   - **Database Tables**: Persists to `dbo.PostLam_Visual_Inspections` and `dbo.PostLam_Inspection_Defects` in MSSQL `PL2` (and isolated local SQLite tables `postlam_visual_inspections` / `postlam_inspection_defects`).
   - **Dual Post-Lam EL1 FTP Fetching**: Queries `dbo.EL1` metadata (`L2_QEL001` vs. `L2_QEL002`) and fetches images automatically across **both Post-Lam EL PCs** (`10.1.19.75` and `10.1.19.86` via `/EL/<YYYYMMDD>/{Day,Night}/{OK,NG}/{Module_ID}.jpg`, using `POSTLAM_FTP_HOSTS`, `POSTLAM_FTP_USERNAME`, `POSTLAM_FTP_PASSWORD`).
   - **Single-Screen Android Tablet EL1 Viewer**: In `/postlam` mode, an embedded **EL1 Inspection Image** card renders directly above the Front/Back grids with `OK`/`NG` badge, EL machine badge (`L2_QEL001`/`L2_QEL002`), mirrored EL coordinates (`24..1` & `A..F`), 2-finger pinch-to-zoom, 1-finger pan, and double-tap reset.
-  - **Conveyor Isolation**: Ignores downstream FVI `CH88` MQTT conveyor arrivals so mid-line Post-Lam inspections are never overwritten.
+  - **Conveyor Isolation**: Ignores downstream FVI `CH88` MQTT conveyor arrivals so mid-line Post-Lam inspections are never overwritten, and does not emit FVI `CH88/cmd` PLC conveyor release signals on submit.
 
 ---
 
@@ -241,12 +241,24 @@ All integration settings are managed through environment variables in `.env`:
 | `FTP_ENABLED` | `false` | Enable automatic EL image fetching from tester PC |
 | `FTP_HOST` | `192.168.1.150` | IP address of the EL test machine |
 | `FTP_REMOTE_DIR` | `/EL_Captures` | Remote directory where the camera saves images |
-| `MQTT_ENABLED` | `false` | Enable conveyor panel arrival trigger events |
+| `MQTT_ENABLED` | `false` | Enable conveyor panel arrival trigger events and PLC command publishing |
 | `MQTT_BROKER` | `localhost` | MQTT broker hostname |
 | `MQTT_TOPIC` | `factory/conveyor/fvi/station1/panel` | MQTT topic for arrival notifications |
+| `MQTT_CMD_TOPIC` | `usm/cstx/prod/line2/CH88/cmd` | MQTT topic for automatic FVI PLC conveyor release commands |
+| `MQTT_AUTO_SEND_ON_GRADE` | `true` | Auto-publish PLC conveyor release pulse when an FVI grade is submitted |
+| `MQTT_SEND_PULSE_SEC` | `1.5` | Momentary `{"SEND": 1}` pulse duration (seconds) before resetting to `{"SEND": 0}` |
+| `MQTT_SEND_COOLDOWN_SEC` | `8.0` | Minimum travel buffer cooldown (seconds) between conveyor release pulses |
 
 > [!NOTE]
 > When `MSSQL_ENABLED=false`, the server automatically defaults to local high-speed SQLite storage (`fvi_production.db`). When enabled, records are saved to **both** local SQLite (for zero-latency UI rendering) and the enterprise MS SQL Server tables.
+
+### Automatic PLC Conveyor Release (FVI Mode)
+When an operator submits a grade in **FVI mode** (`station == "fvi"` with `MQTT_ENABLED=true` and `MQTT_AUTO_SEND_ON_GRADE=true`), `POST /api/inspections` automatically publishes a momentary MQTT pulse to `MQTT_CMD_TOPIC` (`usm/cstx/prod/line2/CH88/cmd`, QoS 0, non-retained) so the graded module is dispatched and the next module advances without pressing a physical conveyor button:
+1. **Momentary Pulse (`1` → `0`)**: Publishes `{"SEND": 1}` immediately, then automatically resets with `{"SEND": 0}` after `MQTT_SEND_PULSE_SEC` (`1.5s` default).
+2. **One-Send-Per-Serial Lock**: Prevents duplicate sends if the same module serial is re-submitted (`ALREADY_SENT_FOR_MODULE`).
+3. **Travel Buffer Cooldown**: Enforces `MQTT_SEND_COOLDOWN_SEC` (`8.0s` default) between pulses (`BUFFER_COOLDOWN_ACTIVE`) so an incoming ungraded module cannot be accidentally sent straight to sorting.
+4. **Immediate Arrival Force-Reset**: If a new serial arrives on `CH88` while a `SEND` pulse is still active, the server immediately cancels the remaining pulse timer and publishes `{"SEND": 0}`.
+5. **Post-Lam Isolation**: Submissions in `/postlam` mode return `conveyor_sent: false` (`NOT_APPLICABLE`) and never trigger the FVI `CH88` conveyor.
 
 ---
 
