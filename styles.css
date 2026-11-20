@@ -2384,65 +2384,7 @@ body.station-postlam .back-card {
   }
 }
 
-/* ==========================================================================
-   Grade History Header Tab & Dedicated Tab View
-   ========================================================================== */
-
-.history-tab-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.history-tab-btn.active {
-  background: rgba(56, 189, 248, 0.18);
-  border-color: #38bdf8;
-  color: #38bdf8;
-  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35);
-}
-
-.tab-count-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 20px;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: rgba(56, 189, 248, 0.2);
-  color: #7dd3fc;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.grading-history-search-input {
-  background: rgba(15, 23, 42, 0.85);
-  border: 1px solid var(--border-medium);
-  border-radius: 5px;
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  padding: 4px 9px;
-  width: 190px;
-  outline: none;
-  transition: border-color 0.15s ease;
-}
-
-.grading-history-search-input:focus {
-  border-color: #38bdf8;
-}
-
-body.grading-history-tab-active #logged-defects-strip,
-body.grading-history-tab-active #postlam-el-viewer,
-body.grading-history-tab-active .boards-section {
-  display: none !important;
-}
-
-body.grading-history-tab-active .grading-history-section {
-  min-height: calc(100vh - 110px);
-}
-
-body.grading-history-tab-active .grading-history-table-wrapper {
-  max-height: calc(100vh - 175px);
+a.console-btn,
+a.btn-history-refresh {
+  text-decoration: none;
 }

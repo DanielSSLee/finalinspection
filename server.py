@@ -2085,26 +2085,204 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/defects"):
             mod_id = query.get("module_id", [None])[0]
             defects_tbl = "postlam_inspection_defects" if station == "postlam" else "final_inspection_defects"
-            with get_db() as conn:
-                cursor = conn.cursor()
-                if mod_id:
-                    cursor.execute(f"SELECT * FROM {defects_tbl} WHERE module_id = ? ORDER BY record_id ASC", (mod_id,))
-                else:
-                    cursor.execute(f"SELECT * FROM {defects_tbl} ORDER BY record_id DESC LIMIT 100")
-                rows = [dict(r) for r in cursor.fetchall()]
-                for r in rows:
-                    t = r.get("tested_at")
-                    if t and isinstance(t, str) and not t.endswith("Z") and not ("+" in t or "-" in t[10:]):
-                        r["tested_at"] = t.replace(" ", "T") + "Z"
+            mssql_defects_tbl = "dbo.PostLam_Inspection_Defects" if station == "postlam" else "dbo.Final_Inspection_Defects"
+            rows = []
+
+            if CONFIG.get("mssql", {}).get("enabled", False):
+                mssql_conn, mssql_eng = get_mssql_read_connection()
+                if mssql_conn:
+                    try:
+                        mcur = mssql_conn.cursor()
+                        if mod_id:
+                            m_sql = f"""
+                            SELECT
+                                Record_ID AS record_id,
+                                Module_ID AS module_id,
+                                CONVERT(varchar(33), Tested_At, 127) AS tested_at,
+                                Defect_Location AS defect_location,
+                                Defect_Location AS defect_cell,
+                                Defect_Type AS defect_type,
+                                Tester_Name AS tester_name
+                            FROM {mssql_defects_tbl}
+                            WHERE Module_ID = ?
+                            ORDER BY Record_ID ASC
+                            """
+                            if mssql_eng == "MSSQL_PYMSSQL":
+                                m_sql = m_sql.replace("?", "%s")
+                            mcur.execute(m_sql, (mod_id,))
+                        else:
+                            mcur.execute(f"""
+                            SELECT TOP 200
+                                Record_ID AS record_id,
+                                Module_ID AS module_id,
+                                CONVERT(varchar(33), Tested_At, 127) AS tested_at,
+                                Defect_Location AS defect_location,
+                                Defect_Location AS defect_cell,
+                                Defect_Type AS defect_type,
+                                Tester_Name AS tester_name
+                            FROM {mssql_defects_tbl}
+                            ORDER BY Record_ID DESC
+                            """)
+                        cols = [d[0].lower() for d in mcur.description]
+                        rows = [dict(zip(cols, r)) for r in mcur.fetchall()]
+                    except Exception as me:
+                        print(f"[MSSQL Defects Read Notice] {me}")
+                    finally:
+                        try:
+                            mssql_conn.close()
+                        except Exception:
+                            pass
+
+            if not rows:
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    if mod_id:
+                        cursor.execute(f"SELECT * FROM {defects_tbl} WHERE module_id = ? ORDER BY record_id ASC", (mod_id,))
+                    else:
+                        cursor.execute(f"SELECT * FROM {defects_tbl} ORDER BY record_id DESC LIMIT 200")
+                    rows = [dict(r) for r in cursor.fetchall()]
+                    for r in rows:
+                        t = r.get("tested_at")
+                        if t and isinstance(t, str) and not t.endswith("Z") and not ("+" in t or "-" in t[10:]):
+                            r["tested_at"] = t.replace(" ", "T") + "Z"
             self.send_json(200, {"defects": rows, "station": station})
             return
 
         # 7. Fetch Overall Inspection / Grade for Module (dbo.Final_Inspections or dbo.PostLam_Visual_Inspections)
-        # Supports: ?module_id=..., ?search=..., ?grade=..., ?limit=..., ?station=...
+        # Supports: ?module_id=..., ?search=..., ?grade=..., ?limit=all|0|<N>, ?station=...
         if path.startswith("/api/inspections"):
             mod_id = query.get("module_id", [None])[0]
             insp_tbl = "postlam_visual_inspections" if station == "postlam" else "final_inspections"
             defects_tbl = "postlam_inspection_defects" if station == "postlam" else "final_inspection_defects"
+            mssql_insp_tbl = "dbo.PostLam_Visual_Inspections" if station == "postlam" else "dbo.Final_Inspections"
+            mssql_defects_tbl = "dbo.PostLam_Inspection_Defects" if station == "postlam" else "dbo.Final_Inspection_Defects"
+
+            search_term = query.get("search", [None])[0] or query.get("q", [None])[0]
+            grade_filter = query.get("grade", [None])[0]
+            raw_limit = str(query.get("limit", ["all"])[0] or "all").strip().lower()
+            if raw_limit in ("all", "0", "none", "full", "unlimited"):
+                limit = None
+            elif raw_limit.isdigit() and int(raw_limit) > 0:
+                limit = int(raw_limit)
+            else:
+                limit = None
+
+            # 7a. Prefer live MSSQL PL2 when enabled and reachable so the complete production history is returned
+            if CONFIG.get("mssql", {}).get("enabled", False):
+                mssql_conn, mssql_eng = get_mssql_read_connection()
+                if mssql_conn:
+                    try:
+                        mcur = mssql_conn.cursor()
+                        if mod_id:
+                            m_sql = f"""
+                            SELECT TOP 1
+                                fi.Record_ID AS record_id,
+                                fi.Module_ID AS module_id,
+                                CONVERT(varchar(33), fi.Tested_At, 127) AS tested_at,
+                                CAST(fi.Grade AS varchar(8)) AS grade,
+                                CAST(fi.Grade AS varchar(8)) AS result_code,
+                                fi.Tester_Name AS tester_name,
+                                ISNULL(d.defect_count, 0) AS defect_count,
+                                ISNULL(d.defect_summary, '') AS defect_summary
+                            FROM {mssql_insp_tbl} fi
+                            LEFT JOIN (
+                                SELECT
+                                    Module_ID,
+                                    COUNT(*) AS defect_count,
+                                    STRING_AGG(CAST(ISNULL(Defect_Location, '') + ': ' + ISNULL(Defect_Type, '') AS varchar(max)), '; ') AS defect_summary
+                                FROM {mssql_defects_tbl}
+                                WHERE Module_ID = ?
+                                GROUP BY Module_ID
+                            ) d ON d.Module_ID = fi.Module_ID
+                            WHERE fi.Module_ID = ?
+                            ORDER BY fi.Record_ID DESC
+                            """
+                            if mssql_eng == "MSSQL_PYMSSQL":
+                                m_sql = m_sql.replace("?", "%s")
+                            mcur.execute(m_sql, (mod_id, mod_id))
+                            row = mcur.fetchone()
+                            if row:
+                                cols = [d[0].lower() for d in mcur.description]
+                                data = dict(zip(cols, row))
+                                mssql_conn.close()
+                                self.send_json(200, {"inspection": data, "records": [data], "station": station, "source": "MSSQL"})
+                                return
+                        else:
+                            top_clause = f"TOP ({int(limit)})" if limit else ""
+                            m_sql = f"""
+                            SELECT {top_clause}
+                                fi.Record_ID AS record_id,
+                                fi.Module_ID AS module_id,
+                                CONVERT(varchar(33), fi.Tested_At, 127) AS tested_at,
+                                CAST(fi.Grade AS varchar(8)) AS grade,
+                                CAST(fi.Grade AS varchar(8)) AS result_code,
+                                fi.Tester_Name AS tester_name,
+                                ISNULL(d.defect_count, 0) AS defect_count,
+                                ISNULL(d.defect_summary, '') AS defect_summary
+                            FROM {mssql_insp_tbl} fi
+                            LEFT JOIN (
+                                SELECT
+                                    Module_ID,
+                                    COUNT(*) AS defect_count,
+                                    STRING_AGG(CAST(ISNULL(Defect_Location, '') + ': ' + ISNULL(Defect_Type, '') AS varchar(max)), '; ') AS defect_summary
+                                FROM {mssql_defects_tbl}
+                                GROUP BY Module_ID
+                            ) d ON d.Module_ID = fi.Module_ID
+                            """
+                            params = []
+                            where_clauses = []
+                            if search_term:
+                                st = f"%{search_term.strip()}%"
+                                where_clauses.append("(fi.Module_ID LIKE ? OR fi.Tester_Name LIKE ? OR CONVERT(varchar(33), fi.Tested_At, 120) LIKE ? OR CAST(fi.Grade AS varchar(8)) LIKE ? OR ISNULL(d.defect_summary, '') LIKE ?)")
+                                params.extend([st, st, st, st, st])
+                            if grade_filter and grade_filter.upper() != "ALL":
+                                g_map = {"A": ["A", "0"], "B": ["B", "1"], "R": ["R", "2"], "X": ["X", "3"]}
+                                grades = g_map.get(grade_filter.upper(), [grade_filter])
+                                placeholders = ",".join("?" for _ in grades)
+                                where_clauses.append(f"CAST(fi.Grade AS varchar(8)) IN ({placeholders})")
+                                params.extend(grades)
+                            if where_clauses:
+                                m_sql += " WHERE " + " AND ".join(where_clauses)
+                            m_sql += " ORDER BY fi.Record_ID DESC"
+                            if mssql_eng == "MSSQL_PYMSSQL":
+                                m_sql = m_sql.replace("?", "%s")
+                            mcur.execute(m_sql, tuple(params))
+                            cols = [d[0].lower() for d in mcur.description]
+                            rows = [dict(zip(cols, r)) for r in mcur.fetchall()]
+
+                            mcur.execute(f"""
+                            SELECT
+                                COUNT(*) AS total,
+                                SUM(CASE WHEN CAST(Grade AS varchar(8)) IN ('0', 'A') THEN 1 ELSE 0 END) AS count_a,
+                                SUM(CASE WHEN CAST(Grade AS varchar(8)) IN ('1', 'B') THEN 1 ELSE 0 END) AS count_b,
+                                SUM(CASE WHEN CAST(Grade AS varchar(8)) IN ('2', 'R') THEN 1 ELSE 0 END) AS count_r,
+                                SUM(CASE WHEN CAST(Grade AS varchar(8)) IN ('3', 'X') THEN 1 ELSE 0 END) AS count_x
+                            FROM {mssql_insp_tbl}
+                            """)
+                            s_row = mcur.fetchone()
+                            s_cols = [d[0].lower() for d in mcur.description]
+                            summary = dict(zip(s_cols, s_row)) if s_row else {"total": 0, "count_a": 0, "count_b": 0, "count_r": 0, "count_x": 0}
+                            for k in ("total", "count_a", "count_b", "count_r", "count_x"):
+                                summary[k] = int(summary.get(k) or 0)
+                            mssql_conn.close()
+                            self.send_json(200, {
+                                "inspection": rows,
+                                "records": rows,
+                                "total_count": summary.get("total", len(rows)),
+                                "summary": summary,
+                                "station": station,
+                                "source": "MSSQL"
+                            })
+                            return
+                    except Exception as me:
+                        print(f"[MSSQL Inspections Read Notice] {me}")
+                    finally:
+                        try:
+                            mssql_conn.close()
+                        except Exception:
+                            pass
+
+            # 7b. Local SQLite fallback when MSSQL is disabled or offline
             with get_db() as conn:
                 cursor = conn.cursor()
                 if mod_id:
@@ -2130,14 +2308,9 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                         t = data["tested_at"]
                         if isinstance(t, str) and not t.endswith("Z") and not ("+" in t or "-" in t[10:]):
                             data["tested_at"] = t.replace(" ", "T") + "Z"
-                    self.send_json(200, {"inspection": data, "records": [data] if data else [], "station": station})
+                    self.send_json(200, {"inspection": data, "records": [data] if data else [], "station": station, "source": "SQLITE"})
                     return
                 else:
-                    search_term = query.get("search", [None])[0] or query.get("q", [None])[0]
-                    grade_filter = query.get("grade", [None])[0]
-                    limit_str = query.get("limit", ["200"])[0]
-                    limit = int(limit_str) if limit_str and limit_str.isdigit() else 200
-
                     sql = f"""
                     SELECT 
                         fi.record_id,
@@ -2173,9 +2346,10 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                     sql += """
                     GROUP BY fi.record_id
                     ORDER BY fi.tested_at DESC, fi.record_id DESC
-                    LIMIT ?
                     """
-                    params.append(limit)
+                    if limit:
+                        sql += " LIMIT ?"
+                        params.append(limit)
 
                     cursor.execute(sql, tuple(params))
                     rows = [dict(r) for r in cursor.fetchall()]
@@ -2204,7 +2378,8 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                         "records": rows,
                         "total_count": summary.get("total", len(rows)),
                         "summary": summary,
-                        "station": station
+                        "station": station,
+                        "source": "SQLITE"
                     })
                     return
 
@@ -2365,8 +2540,9 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
         
         if rel_path in ("database", "records", "history", "grading"):
             query_str = f"?{parsed.query}" if parsed.query else ""
+            dest_prefix = "/postlam" if station == "postlam" else ""
             self.send_response(302)
-            self.send_header("Location", f"/database.html{query_str}")
+            self.send_header("Location", f"{dest_prefix}/database.html{query_str}")
             self.end_headers()
             return
 
@@ -2382,7 +2558,7 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
         if rel_path in ("second", "second.html", "screen2", "monitor2", "telemetry"):
             rel_path = "telemetry.html"
 
-        if rel_path in ("index.html", "telemetry.html"):
+        if rel_path in ("index.html", "telemetry.html", "database.html"):
             self._serve_html_with_station(BASE_DIR / rel_path, station_mode=station)
             return
         

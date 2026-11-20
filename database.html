@@ -847,16 +847,16 @@
   <!-- Top Header Navigation -->
   <header class="top-header">
     <div class="header-branding">
-      <span class="station-badge">FVI-01</span>
+      <span class="station-badge" id="station-badge-label">FVI-01</span>
       <div class="header-title-group">
         <h1>
-          <span>Grading Database</span>
+          <span>Full Grading History</span>
           <span class="db-status-pip" id="live-db-indicator">
             <span class="pulse-dot"></span>
-            <span>DB LIVE</span>
+            <span id="live-db-text">DB LIVE</span>
           </span>
         </h1>
-        <div class="subtitle">dbo.Final_Inspections • SQLite &amp; MSSQL Sync • Time Descending</div>
+        <div class="subtitle" id="header-db-subtitle">dbo.Final_Inspections • Full Production History • Time Descending</div>
       </div>
     </div>
 
@@ -1064,7 +1064,18 @@
   <!-- Application Logic -->
   <script>
     // State management
+    const urlParams = new URLSearchParams(window.location.search);
+    const detectedStation = (() => {
+      const qSt = (urlParams.get('station') || urlParams.get('mode') || '').trim().toLowerCase();
+      if (qSt === 'postlam' || qSt === 'post-lam' || qSt === 'post_lam') return 'postlam';
+      if (qSt === 'fvi') return 'fvi';
+      if (window.location.pathname.toLowerCase().startsWith('/postlam')) return 'postlam';
+      if (typeof window.__INITIAL_STATION_MODE__ === 'string' && window.__INITIAL_STATION_MODE__.toLowerCase() === 'postlam') return 'postlam';
+      return 'fvi';
+    })();
+
     const state = {
+      stationMode: detectedStation,
       records: [],
       filteredRecords: [],
       activeGradeFilter: 'ALL',
@@ -1185,11 +1196,11 @@
     }
 
     /**
-     * Fetch inspection records from backend API
+     * Fetch ALL inspection records from backend API (no row cap)
      */
     async function fetchGradingRecords(silent = false) {
       try {
-        const res = await fetch('/api/inspections?limit=500');
+        const res = await fetch(`/api/inspections?limit=all&station=${encodeURIComponent(state.stationMode)}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         
@@ -1202,10 +1213,11 @@
         // Apply active search & filters
         applyFilters();
 
-        dom.metaLastSynced.textContent = `Last Synced: ${state.lastSyncTime.toLocaleTimeString()}`;
+        const srcLabel = data.source === 'MSSQL' ? 'MSSQL PL2 Live' : 'Local SQLite';
+        dom.metaLastSynced.textContent = `Last Synced: ${state.lastSyncTime.toLocaleTimeString()} (${srcLabel})`;
 
         if (!silent) {
-          showToast(`Refreshed ${state.records.length} grading records`, 'info');
+          showToast(`Loaded all ${state.records.length} grading records (${srcLabel})`, 'info');
         }
       } catch (err) {
         console.error('Failed to load grading database records:', err);
@@ -1317,10 +1329,13 @@
         const relTime = formatRelativeTime(item.tested_at);
         const defectCount = parseInt(item.defect_count, 10) || 0;
 
+        const consolePath = state.stationMode === 'postlam' ? '/postlam' : '/index.html';
+        const defectSummaryText = (item.defect_summary || '').trim();
+
         tr.innerHTML = `
           <td class="td-seq">${index + 1}</td>
           <td>
-            <a href="index.html?module=${encodeURIComponent(item.module_id)}" class="serial-badge" title="Click to copy serial or inspect in console">
+            <a href="${consolePath}?module=${encodeURIComponent(item.module_id)}" class="serial-badge" title="Click to inspect ${item.module_id} in console">
               <span>${item.module_id || 'N/A'}</span>
               <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
@@ -1350,14 +1365,17 @@
                 <span>0 defects (Clean)</span>
               </span>
             ` : `
-              <button type="button" class="defect-badge has-defects btn-view-defects" data-module="${item.module_id}" title="Click to view logged defects for this module">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
-                  <circle cx="12" cy="12" r="10"></circle>
-                  <line x1="12" y1="8" x2="12" y2="12"></line>
-                  <line x1="12" y1="16" x2="12.01" y2="16"></line>
-                </svg>
-                <span>${defectCount} ${defectCount === 1 ? 'defect' : 'defects'}</span>
-              </button>
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <button type="button" class="defect-badge has-defects btn-view-defects" data-module="${item.module_id}" title="Click to view logged defects for this module">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="8" x2="12" y2="12"></line>
+                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                  </svg>
+                  <span>${defectCount} ${defectCount === 1 ? 'defect' : 'defects'}</span>
+                </button>
+                ${defectSummaryText ? `<span style="font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono);">${defectSummaryText}</span>` : ''}
+              </div>
             `}
           </td>
           <td>
@@ -1370,7 +1388,7 @@
             </div>
           </td>
           <td style="text-align: right;">
-            <a href="index.html?module=${encodeURIComponent(item.module_id)}" class="action-btn" title="Open ${item.module_id} in main inspection console">
+            <a href="${consolePath}?module=${encodeURIComponent(item.module_id)}" class="action-btn" title="Open ${item.module_id} in main inspection console">
               <span>Inspect</span>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
                 <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
@@ -1396,7 +1414,7 @@
       dom.defectModal.classList.add('open');
 
       try {
-        const res = await fetch(`/api/defects?module_id=${encodeURIComponent(moduleId)}`);
+        const res = await fetch(`/api/defects?module_id=${encodeURIComponent(moduleId)}&station=${encodeURIComponent(state.stationMode)}`);
         const data = await res.json();
         const defects = data.defects || [];
 
@@ -1601,6 +1619,22 @@
 
     // Initialize
     document.addEventListener('DOMContentLoaded', () => {
+      if (state.stationMode === 'postlam') {
+        document.title = 'Post-Lam Inspection — Full Grading History';
+        const badge = document.getElementById('station-badge-label');
+        if (badge) badge.textContent = 'POST-LAM';
+        const sub = document.getElementById('header-db-subtitle');
+        if (sub) sub.textContent = 'dbo.PostLam_Visual_Inspections • Full Production History • Time Descending';
+        const backBtn = document.getElementById('btn-back-console');
+        if (backBtn) backBtn.href = '/postlam';
+        const telBtn = document.getElementById('btn-open-telemetry');
+        if (telBtn) telBtn.href = '/postlam/second';
+      } else {
+        const backBtn = document.getElementById('btn-back-console');
+        if (backBtn) backBtn.href = '/index.html';
+        const telBtn = document.getElementById('btn-open-telemetry');
+        if (telBtn) telBtn.href = '/telemetry.html';
+      }
       setupEventListeners();
       fetchGradingRecords(true);
       startAutoRefresh();

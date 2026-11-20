@@ -89,17 +89,18 @@
         <div class="grade-restrictions-hint" id="grade-restrictions-hint" style="display: none;"></div>
       </div>
 
-      <!-- Right: Grade History Tab & Submit Grade -->
+      <!-- Right: Full Grade History Page & Submit Grade -->
       <div class="header-segment action-segment">
-        <button type="button" id="btn-toggle-grading-history" class="console-btn secondary history-tab-btn"
-          aria-pressed="false" title="Switch to Grade History tab">
+        <a href="/database.html" target="_blank" id="btn-view-database" class="console-btn secondary"
+          title="Open Full Grading History Page in a New Tab">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"></circle>
-            <polyline points="12 6 12 12 16 14"></polyline>
+            <path d="M4 6h16M4 12h16M4 18h16"></path>
+            <circle cx="2" cy="6" r="1"></circle>
+            <circle cx="2" cy="12" r="1"></circle>
+            <circle cx="2" cy="18" r="1"></circle>
           </svg>
-          <span>Grade History</span>
-          <span class="tab-count-pill" id="header-grading-history-badge">0</span>
-        </button>
+          <span>Grade History ↗</span>
+        </a>
 
         <button type="button" id="btn-save-inspection" class="console-btn primary"
           title="Submit module grade to database [Hotkey: Enter]">
@@ -332,8 +333,6 @@
             <span class="history-subtext">&bull; Recent graded modules in reverse chronological order</span>
           </div>
           <div class="header-right-tools">
-            <input type="search" id="grading-history-search" class="grading-history-search-input"
-              placeholder="Filter serial / operator..." aria-label="Filter grading history" autocomplete="off">
             <span class="history-click-hint">Click row to reload module &amp; defects</span>
             <button type="button" id="btn-refresh-grading-history" class="btn-history-refresh"
               title="Refresh grading history">
@@ -344,6 +343,10 @@
               </svg>
               <span>Refresh</span>
             </button>
+            <a href="/database.html" target="_blank" id="btn-open-full-history" class="btn-history-refresh"
+              title="Open full grading history page in a new tab">
+              <span>Full History ↗</span>
+            </a>
           </div>
         </div>
 
