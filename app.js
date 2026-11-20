@@ -249,6 +249,9 @@ const dom = {
   pinsBack: document.getElementById('pins-back'),
 
   // Grading History
+  btnToggleGradingHistory: document.getElementById('btn-toggle-grading-history'),
+  headerGradingHistoryBadge: document.getElementById('header-grading-history-badge'),
+  gradingHistorySearch: document.getElementById('grading-history-search'),
   gradingHistoryBadge: document.getElementById('grading-history-badge'),
   gradingHistoryTbody: document.getElementById('grading-history-tbody'),
   emptyGradingHistoryState: document.getElementById('empty-grading-history-state'),
@@ -2016,10 +2019,32 @@ function applyDefectsData(data) {
 }
 
 /**
+ * Toggle dedicated Grade History tab view
+ */
+function setGradingHistoryTab(active) {
+  const isActive = !!active;
+  document.body.classList.toggle('grading-history-tab-active', isActive);
+  if (dom.btnToggleGradingHistory) {
+    dom.btnToggleGradingHistory.classList.toggle('active', isActive);
+    dom.btnToggleGradingHistory.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    const labelSpan = dom.btnToggleGradingHistory.querySelector('span');
+    if (labelSpan) {
+      labelSpan.textContent = isActive ? 'Back to Inspection' : 'Grade History';
+    }
+  }
+  if (isActive) {
+    fetchGradingHistory();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+}
+
+/**
  * Fetch & Render Grading History
  */
 function fetchGradingHistory() {
-  fetch(`${config.apiBaseUrl}/api/inspections?limit=50&station=${encodeURIComponent(state.stationMode)}`)
+  const searchVal = dom.gradingHistorySearch ? dom.gradingHistorySearch.value.trim() : '';
+  const searchParam = searchVal ? `&search=${encodeURIComponent(searchVal)}` : '';
+  fetch(`${config.apiBaseUrl}/api/inspections?limit=50&station=${encodeURIComponent(state.stationMode)}${searchParam}`)
     .then(res => res.json())
     .then(data => {
       const records = data.records || data.inspection || [];
@@ -2033,6 +2058,7 @@ function renderGradingHistory(records) {
 
   const count = (records && records.length) || 0;
   if (dom.gradingHistoryBadge) dom.gradingHistoryBadge.textContent = count;
+  if (dom.headerGradingHistoryBadge) dom.headerGradingHistoryBadge.textContent = count;
   dom.gradingHistoryTbody.innerHTML = '';
 
   if (count === 0) {
@@ -2065,9 +2091,10 @@ function renderGradingHistory(records) {
       <td class="gh-defects">${escapeHtml(defects)}</td>
     `;
 
-    // Click row: loads that module's serial and defects
+    // Click row: loads that module's serial and defects and returns to Inspection tab
     tr.addEventListener('click', () => {
       loadModule(serial, 'HISTORY', true);
+      setGradingHistoryTab(false);
       showToast(`Loaded module ${serial} from history`, 'info');
       soundFx.beep(700, 0.05);
     });
@@ -2175,6 +2202,25 @@ function attachEventListeners() {
           removeDefect(d.coord, d.side);
         }
       }
+    });
+  }
+
+  // Grade History Tab Toggle & Filter
+  if (dom.btnToggleGradingHistory) {
+    dom.btnToggleGradingHistory.addEventListener('click', () => {
+      const currentlyActive = document.body.classList.contains('grading-history-tab-active');
+      setGradingHistoryTab(!currentlyActive);
+      soundFx.beep(650, 0.04);
+    });
+  }
+
+  if (dom.gradingHistorySearch) {
+    let ghSearchTimer = null;
+    dom.gradingHistorySearch.addEventListener('input', () => {
+      clearTimeout(ghSearchTimer);
+      ghSearchTimer = setTimeout(() => {
+        fetchGradingHistory();
+      }, 200);
     });
   }
 

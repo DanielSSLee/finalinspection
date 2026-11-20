@@ -89,8 +89,18 @@
         <div class="grade-restrictions-hint" id="grade-restrictions-hint" style="display: none;"></div>
       </div>
 
-      <!-- Right: Submit Grade -->
+      <!-- Right: Grade History Tab & Submit Grade -->
       <div class="header-segment action-segment">
+        <button type="button" id="btn-toggle-grading-history" class="console-btn secondary history-tab-btn"
+          aria-pressed="false" title="Switch to Grade History tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polyline points="12 6 12 12 16 14"></polyline>
+          </svg>
+          <span>Grade History</span>
+          <span class="tab-count-pill" id="header-grading-history-badge">0</span>
+        </button>
+
         <button type="button" id="btn-save-inspection" class="console-btn primary"
           title="Submit module grade to database [Hotkey: Enter]">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -322,6 +332,8 @@
             <span class="history-subtext">&bull; Recent graded modules in reverse chronological order</span>
           </div>
           <div class="header-right-tools">
+            <input type="search" id="grading-history-search" class="grading-history-search-input"
+              placeholder="Filter serial / operator..." aria-label="Filter grading history" autocomplete="off">
             <span class="history-click-hint">Click row to reload module &amp; defects</span>
             <button type="button" id="btn-refresh-grading-history" class="btn-history-refresh"
               title="Refresh grading history">
