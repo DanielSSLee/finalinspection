@@ -2361,6 +2361,35 @@ body.station-postlam .back-card {
   font-size: 12px;
 }
 
+.postlam-el-no-image {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: rgba(11, 15, 25, 0.92);
+  color: #64748b;
+  font-family: var(--font-mono);
+  text-align: center;
+  padding: 12px;
+  pointer-events: none;
+}
+
+.postlam-el-no-image-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #94a3b8;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.postlam-el-no-image-sub {
+  font-size: 11px;
+  color: #64748b;
+}
+
 @media (max-width: 960px) {
   body.station-postlam .console-header {
     flex-wrap: wrap;

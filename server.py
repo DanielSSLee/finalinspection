@@ -911,25 +911,8 @@ def init_database():
 # ---------------------------------------------------------------------------
 # FTP Image Fetcher (Connects to EL Testing PC / FTP Server 100.100.200.223)
 # ---------------------------------------------------------------------------
-def _get_el_fallback_sample(panel_id, side_normalized, reason="FALLBACK_SAMPLE"):
-    if side_normalized == "back":
-        back_sample = BASE_DIR / "sample_el_back.jpg"
-        if back_sample.exists():
-            return back_sample, f"{reason}_BACK" if reason == "FALLBACK_SAMPLE" else reason
-    fallback_samples = [
-        BASE_DIR / "sample_el_1.jpg",
-        BASE_DIR / "sample_el_2.jpg",
-        BASE_DIR / "sample_el_3.jpg",
-        BASE_DIR / "sample_el_4.jpg"
-    ]
-    existing_samples = [s for s in fallback_samples if s.exists()]
-    if existing_samples:
-        chosen = existing_samples[abs(hash(panel_id)) % len(existing_samples)]
-        return chosen, reason
-    default_single = BASE_DIR / "solar_el_sample.jpg"
-    if default_single.exists():
-        return default_single, reason
-    return None, "NO_IMAGE_AVAILABLE"
+def _get_el_fallback_sample(panel_id, side_normalized, reason="NO_IMAGE_AVAILABLE"):
+    return None, reason or "NO_IMAGE_AVAILABLE"
 
 
 def _try_ftp_retr(ftp, remote_path, tmp_file):
@@ -1324,9 +1307,7 @@ def prefetch_all_data_for_module(serial):
     module serial arrives at conveyor CH88 so cached telemetry is complete before serving.
     """
     try:
-        sample_num = (abs(hash(serial)) % 4) + 1
         el_image_url = f"/api/module/{serial}/el-image?side=front"
-        el_sample_fallback = f"sample_el_{sample_num}.jpg"
 
         sunsim = get_sunsim_telemetry(serial)
         hipot = get_hipot_telemetry(serial)
@@ -1346,8 +1327,8 @@ def prefetch_all_data_for_module(serial):
             "module_id": serial,
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
             "el_image": el_image_url,
-            "el_fallback": el_sample_fallback,
-            "el_images": [el_sample_fallback],
+            "el_fallback": None,
+            "el_images": [],
             "el_folder": el_folder,
             "el_source": el_source,
             "sunsim": sunsim,
@@ -2078,7 +2059,12 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(img_data)
             else:
-                self.send_json(404, {"error": "Image not found", "source": source})
+                self.send_response(204)
+                self.send_header("X-Image-Source", source or "NO_IMAGE_AVAILABLE")
+                self.send_header("X-Station-Mode", station)
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
             return
 
         # 6. Fetch Logged Defects for Module (table: dbo.Final_Inspection_Defects or dbo.PostLam_Inspection_Defects)
@@ -2439,17 +2425,15 @@ class FVIEdgeHandler(BaseHTTPRequestHandler):
                     pass
 
             # EL Image for single-module reference display on Monitor 2
-            sample_num = (abs(hash(mod_id)) % 4) + 1
             el_image_url = f"/api/module/{mod_id}/el-image?side=front&station={station}"
-            el_sample_fallback = f"sample_el_{sample_num}.jpg"
 
             telemetry_data = {
                 "module_id": mod_id,
                 "station": station,
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
                 "el_image": el_image_url,
-                "el_fallback": el_sample_fallback,
-                "el_images": [el_sample_fallback],
+                "el_fallback": None,
+                "el_images": [],
                 "el_folder": el_folder,
                 "sunsim": sunsim,
                 "sun_simulator": sunsim,

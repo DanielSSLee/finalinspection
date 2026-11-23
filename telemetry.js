@@ -108,7 +108,26 @@
   // =========================================================================
   // 1. Single Module EL Image Reference Display
   // =========================================================================
-  function updateSingleElImage(moduleId, elUrl, fallbackUrl, forceBust = false) {
+  let activeElBlobUrl = null;
+  let elFetchSeq = 0;
+
+  function showNoElImage(subtitleText) {
+    const noImgEl = document.getElementById('el-no-image-overlay');
+    const noImgSub = document.getElementById('el-no-image-subtitle');
+    if (activeElBlobUrl) {
+      URL.revokeObjectURL(activeElBlobUrl);
+      activeElBlobUrl = null;
+    }
+    if (dom.elSingleImg) {
+      dom.elSingleImg.style.display = 'none';
+      dom.elSingleImg.removeAttribute('src');
+    }
+    if (dom.elLoadingOverlay) dom.elLoadingOverlay.style.display = 'none';
+    if (noImgSub) noImgSub.textContent = subtitleText || 'No EL image found';
+    if (noImgEl) noImgEl.style.display = 'flex';
+  }
+
+  function updateSingleElImage(moduleId, elUrl, _fallbackUrl, forceBust = false) {
     if (!dom.elSingleImg) return;
 
     if (moduleId && moduleId === state.loadedElModuleId && !forceBust) {
@@ -117,54 +136,53 @@
     state.loadedElModuleId = moduleId || '';
     resetElZoom();
 
-    // Ensure the <img> tag is always visible
-    dom.elSingleImg.style.display = 'block';
+    const mySeq = ++elFetchSeq;
+    const noImgEl = document.getElementById('el-no-image-overlay');
 
-    // Deterministic hash from moduleId for stable sample fallback
-    let hash = 0;
-    const str = String(moduleId || 'USM0112208260078');
-    for (let i = 0; i < str.length; i++) {
-      hash = ((hash << 5) - hash) + str.charCodeAt(i);
-      hash |= 0;
-    }
-    const sampleIdx = Math.abs(hash % 4) + 1;
-    const defaultFallback = `sample_el_${sampleIdx}.jpg`;
-    const finalFallback = fallbackUrl || defaultFallback;
-
-    // Attach graceful fallback handler with 1-time automatic retry before falling back to sample image
-    let retried = false;
-    dom.elSingleImg.onerror = function () {
-      if (!retried && moduleId && moduleId.length === 16) {
-        retried = true;
-        setTimeout(() => {
-          if (state.moduleId === moduleId) {
-            dom.elSingleImg.src = `/api/module/${encodeURIComponent(moduleId)}/el-image?side=front&${getStationQuery()}&_t=${Date.now()}`;
-          }
-        }, 400);
-        return;
-      }
-      console.warn('[Telemetry] EL image load failed for', moduleId, 'falling back to', finalFallback);
-      this.onerror = null;
-      this.src = finalFallback;
-      if (dom.elLoadingOverlay) dom.elLoadingOverlay.style.display = 'none';
-    };
-
-    dom.elSingleImg.onload = function () {
-      if (dom.elLoadingOverlay) dom.elLoadingOverlay.style.display = 'none';
-    };
-
-    // If no valid module ID yet, immediately show sample fallback image (never leave black)
+    // If no valid module ID yet, show clean "No EL Image Found" placeholder
     if (!moduleId || moduleId === 'Waiting for Module...') {
-      dom.elSingleImg.src = finalFallback;
+      showNoElImage('Waiting for module serial...');
       return;
     }
+
+    if (noImgEl) noImgEl.style.display = 'none';
+    if (dom.elLoadingOverlay) dom.elLoadingOverlay.style.display = 'flex';
 
     const bustParam = `&_t=${Date.now()}${forceBust ? '&refresh=1' : ''}`;
     const targetSrc = elUrl
       ? (elUrl.includes('?') ? `${elUrl}&${getStationQuery()}${bustParam}` : `${elUrl}?${getStationQuery()}${bustParam}`)
       : (`/api/module/${encodeURIComponent(moduleId)}/el-image?side=front&${getStationQuery()}${bustParam}`);
 
-    dom.elSingleImg.src = targetSrc;
+    fetch(targetSrc)
+      .then((res) => {
+        if (mySeq !== elFetchSeq) return null;
+        if (!res.ok || res.status === 204) {
+          showNoElImage(`No EL image found for ${moduleId}`);
+          return null;
+        }
+        return res.blob();
+      })
+      .then((blob) => {
+        if (mySeq !== elFetchSeq || !blob || blob.size === 0) return;
+        const nextUrl = URL.createObjectURL(blob);
+        if (activeElBlobUrl) {
+          URL.revokeObjectURL(activeElBlobUrl);
+        }
+        activeElBlobUrl = nextUrl;
+        dom.elSingleImg.onload = function () {
+          if (noImgEl) noImgEl.style.display = 'none';
+          dom.elSingleImg.style.display = 'block';
+          if (dom.elLoadingOverlay) dom.elLoadingOverlay.style.display = 'none';
+        };
+        dom.elSingleImg.onerror = function () {
+          showNoElImage(`No EL image found for ${moduleId}`);
+        };
+        dom.elSingleImg.src = nextUrl;
+      })
+      .catch(() => {
+        if (mySeq !== elFetchSeq) return;
+        showNoElImage(`No EL image found for ${moduleId}`);
+      });
   }
 
   // Hover-centered scroll-wheel zoom controller for EL image inspection

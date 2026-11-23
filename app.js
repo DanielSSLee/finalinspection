@@ -327,6 +327,8 @@ const dom = {
   postlamElFolderBadge: document.getElementById('postlam-el-folder-badge'),
   postlamElMachineBadge: document.getElementById('postlam-el-machine-badge'),
   postlamElLoading: document.getElementById('postlam-el-loading'),
+  postlamElNoImage: document.getElementById('postlam-el-no-image'),
+  postlamElNoImageSub: document.getElementById('postlam-el-no-image-sub'),
   btnPostlamRefreshEl: document.getElementById('btn-postlam-refresh-el'),
   btnPostlamToggleEl: document.getElementById('btn-postlam-toggle-el'),
   btnPostlamResetZoom: document.getElementById('btn-postlam-reset-zoom'),
@@ -639,32 +641,75 @@ function renderPostLamElBadges(elData) {
   }
 }
 
+let activePostLamElBlobUrl = null;
+let postLamElFetchSeq = 0;
+
+function showPostLamNoImage(subText) {
+  if (activePostLamElBlobUrl) {
+    URL.revokeObjectURL(activePostLamElBlobUrl);
+    activePostLamElBlobUrl = null;
+  }
+  if (dom.postlamElLoading) dom.postlamElLoading.style.display = 'none';
+  if (dom.postlamElImg) {
+    dom.postlamElImg.style.display = 'none';
+    dom.postlamElImg.removeAttribute('src');
+  }
+  if (dom.postlamElNoImageSub) {
+    dom.postlamElNoImageSub.textContent = subText || 'No EL1 image found';
+  }
+  if (dom.postlamElNoImage) {
+    dom.postlamElNoImage.style.display = 'flex';
+  }
+}
+
 function updatePostLamElImage(moduleId, forceBust = false) {
   if (state.stationMode !== 'postlam' || !dom.postlamElImg) return;
   resetPostLamElZoom();
 
+  const mySeq = ++postLamElFetchSeq;
   const cleanMod = String(moduleId || '').trim().toUpperCase();
   if (!cleanMod || cleanMod.length !== 16 || !cleanMod.startsWith('USM')) {
-    if (dom.postlamElLoading) dom.postlamElLoading.style.display = 'none';
     dom.postlamElImg.onerror = null;
-    dom.postlamElImg.src = 'sample_el_1.jpg';
+    showPostLamNoImage('Scan module to fetch EL1 image');
     renderPostLamElBadges(null);
     return;
   }
 
+  if (dom.postlamElNoImage) dom.postlamElNoImage.style.display = 'none';
   if (dom.postlamElLoading) dom.postlamElLoading.style.display = 'flex';
   const bustParam = `&_t=${Date.now()}${forceBust ? '&refresh=1' : ''}`;
   const targetUrl = `${config.apiBaseUrl}/api/module/${encodeURIComponent(cleanMod)}/el-image?side=front&station=postlam${bustParam}`;
 
-  dom.postlamElImg.onload = () => {
-    if (dom.postlamElLoading) dom.postlamElLoading.style.display = 'none';
-  };
-  dom.postlamElImg.onerror = () => {
-    if (dom.postlamElLoading) dom.postlamElLoading.style.display = 'none';
-    dom.postlamElImg.onerror = null;
-    dom.postlamElImg.src = 'sample_el_1.jpg';
-  };
-  dom.postlamElImg.src = targetUrl;
+  fetch(targetUrl)
+    .then((res) => {
+      if (mySeq !== postLamElFetchSeq) return null;
+      if (!res.ok || res.status === 204) {
+        showPostLamNoImage(`No EL1 image found for ${cleanMod}`);
+        return null;
+      }
+      return res.blob();
+    })
+    .then((blob) => {
+      if (mySeq !== postLamElFetchSeq || !blob || blob.size === 0) return;
+      const nextUrl = URL.createObjectURL(blob);
+      if (activePostLamElBlobUrl) {
+        URL.revokeObjectURL(activePostLamElBlobUrl);
+      }
+      activePostLamElBlobUrl = nextUrl;
+      dom.postlamElImg.onload = () => {
+        if (dom.postlamElNoImage) dom.postlamElNoImage.style.display = 'none';
+        if (dom.postlamElLoading) dom.postlamElLoading.style.display = 'none';
+        dom.postlamElImg.style.display = 'block';
+      };
+      dom.postlamElImg.onerror = () => {
+        showPostLamNoImage(`No EL1 image found for ${cleanMod}`);
+      };
+      dom.postlamElImg.src = nextUrl;
+    })
+    .catch(() => {
+      if (mySeq !== postLamElFetchSeq) return;
+      showPostLamNoImage(`No EL1 image found for ${cleanMod}`);
+    });
 
   fetch(`${config.apiBaseUrl}/api/telemetry/el1?module_id=${encodeURIComponent(cleanMod)}`)
     .then((r) => (r.ok ? r.json() : null))

@@ -62,7 +62,17 @@
           <div class="el-stage-and-axis-y">
             <!-- Single Module EL Image View - 100% edge-to-edge -->
             <div class="el-single-viewport" id="el-single-viewport">
-              <img src="sample_el_1.jpg" alt="Active Module EL Image" class="el-single-img" id="el-single-img" />
+              <img alt="Active Module EL Image" class="el-single-img" id="el-single-img" style="display: none;" />
+              <div class="el-no-image-overlay" id="el-no-image-overlay" style="display: flex;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" width="38" height="38">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                  <line x1="3" y1="3" x2="21" y2="21"></line>
+                  <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                  <polyline points="21 15 16 10 5 21"></polyline>
+                </svg>
+                <span class="el-no-image-title" id="el-no-image-title">No EL Image Found</span>
+                <span class="el-no-image-subtitle" id="el-no-image-subtitle">Waiting for module serial...</span>
+              </div>
               <div class="el-loading-overlay" id="el-loading-overlay" style="display: none;">
                 <span class="el-loading-text">Loading live EL inspection imagery...</span>
               </div>
