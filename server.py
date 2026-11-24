@@ -267,42 +267,26 @@ def get_sunsim_telemetry(module_id):
                 except Exception:
                     pass
 
-    # Fallback when a module is not yet in dbo.IV_Flasher (or DB is offline)
-    fallback_voc = 50.35
-    fallback_isc = 13.56
-    fallback_vmpp = 42.28
-    fallback_impp = 12.88
-    fallback_pmpp = round(fallback_vmpp * fallback_impp, 2)
-    fallback_ff = round((fallback_pmpp / (fallback_voc * fallback_isc)) * 100.0, 2)
-
-    combined_curve = []
-    num_pts = 60
-    for i in range(num_pts + 1):
-        v = round((fallback_voc * i) / num_pts, 2)
-        v_norm = v / fallback_voc if fallback_voc > 0 else 0.0
-        cur_i = round(max(0.0, fallback_isc * (1.0 - (v_norm ** 9.6))), 3) if v < fallback_voc else 0.0
-        p = round(v * cur_i, 1)
-        combined_curve.append({"v": v, "i": cur_i, "p": p})
-
+    # When a module is not yet in dbo.IV_Flasher (or DB is offline), return explicit no-data payload
     return {
         "found": False,
-        "source": "SIMULATED_FALLBACK",
+        "source": "NO_DATA",
         "record_id": None,
         "module_id": module_id or "",
         "tested_at": "",
-        "pmpp": fallback_pmpp,
-        "pmax": fallback_pmpp,
-        "vmpp": fallback_vmpp,
-        "vmp": fallback_vmpp,
-        "impp": fallback_impp,
-        "imp": fallback_impp,
-        "voc": fallback_voc,
-        "isc": fallback_isc,
-        "fill_factor": fallback_ff,
-        "ff": fallback_ff,
+        "pmpp": None,
+        "pmax": None,
+        "vmpp": None,
+        "vmp": None,
+        "impp": None,
+        "imp": None,
+        "voc": None,
+        "isc": None,
+        "fill_factor": None,
+        "ff": None,
         "result_file": "",
-        "iv_curve": combined_curve,
-        "pmax_curve": combined_curve
+        "iv_curve": [],
+        "pmax_curve": []
     }
 
 
@@ -353,12 +337,12 @@ def get_hipot_telemetry(module_id):
 
     return {
         "found": False,
-        "source": "SIMULATED_FALLBACK",
+        "source": "NO_DATA",
         "record_id": None,
         "module_id": module_id or "",
         "tested_at": "",
-        "passed": False,
-        "overall_result": "N/A",
+        "passed": None,
+        "overall_result": "NO DATA",
         "result_file": ""
     }
 

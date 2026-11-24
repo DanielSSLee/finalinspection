@@ -428,6 +428,7 @@ html, body {
   pointer-events: none;
   will-change: transform;
   transform-origin: 50% 50%;
+  transform: scaleX(-1);
   transition: opacity 0.25s ease;
 }
 
@@ -759,6 +760,16 @@ html, body {
   border: 1px solid #f43f5e;
   color: #fb7185;
   box-shadow: 0 0 16px rgba(244, 63, 94, 0.45);
+}
+
+.hipot-status-badge.no-data {
+  background: rgba(148, 163, 184, 0.14);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  color: #94a3b8;
+  font-size: 0.9rem;
+  letter-spacing: 0.06em;
+  padding: 6px 12px;
+  box-shadow: none;
 }
 
 .hipot-card-val {

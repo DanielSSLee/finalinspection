@@ -57,7 +57,7 @@
         </div>
 
         <div class="el-viewport-container" id="el-viewport-container">
-          <!-- Top X-Axis: 1 to 24 (Left to Right, mirrored relative to main FVI stage) -->
+          <!-- Top X-Axis: 1 to 24 (Left to Right, matching FVI defect grid with horizontally mirrored EL image) -->
           <div class="el-axis-x-row" id="el-axis-x"></div>
           <div class="el-stage-and-axis-y">
             <!-- Single Module EL Image View - 100% edge-to-edge -->
@@ -103,10 +103,14 @@
             <div class="graph-legend-bar">
               <div class="legend-item"><span class="legend-dot pv-line"></span><span>P-V Power (W)</span></div>
               <div class="legend-item"><span class="legend-dot iv-line"></span><span>I-V Current (A)</span></div>
-              <div class="legend-item"><span class="legend-dot mpp-line"></span><span>MPP: <b id="legend-pmax-val">544.6 W</b></span></div>
+              <div class="legend-item"><span class="legend-dot mpp-line"></span><span>MPP: <b id="legend-pmax-val">--</b></span></div>
             </div>
             <div class="canvas-container" id="canvas-container">
-              <canvas id="pmax-canvas"></canvas>
+              <canvas id="pmax-canvas" style="display: none;"></canvas>
+              <div class="el-no-image-overlay" id="sunsim-no-data-overlay" style="display: flex;">
+                <span class="el-no-image-title" id="sunsim-no-data-title">No SunSim / IV Flash Data Found</span>
+                <span class="el-no-image-subtitle" id="sunsim-no-data-subtitle">Waiting for module serial...</span>
+              </div>
               <div class="canvas-crosshair-badge hidden" id="canvas-readout"></div>
             </div>
           </div>
@@ -117,7 +121,7 @@
             <div class="kpi-mini-card kpi-pmax-highlight">
               <span class="kpi-m-label">PMPP (W)</span>
               <div class="kpi-m-val-row">
-                <span class="kpi-m-val highlight" id="val-pmax">544.6</span>
+                <span class="kpi-m-val highlight" id="val-pmax">--</span>
                 <span class="kpi-m-unit">W</span>
               </div>
             </div>
@@ -126,7 +130,7 @@
             <div class="kpi-mini-card">
               <span class="kpi-m-label">VMPP (V)</span>
               <div class="kpi-m-val-row">
-                <span class="kpi-m-val" id="val-vmp">42.28</span>
+                <span class="kpi-m-val" id="val-vmp">--</span>
                 <span class="kpi-m-unit">V</span>
               </div>
             </div>
@@ -135,7 +139,7 @@
             <div class="kpi-mini-card">
               <span class="kpi-m-label">IMPP (A)</span>
               <div class="kpi-m-val-row">
-                <span class="kpi-m-val" id="val-imp">12.88</span>
+                <span class="kpi-m-val" id="val-imp">--</span>
                 <span class="kpi-m-unit">A</span>
               </div>
             </div>
@@ -144,7 +148,7 @@
             <div class="kpi-mini-card">
               <span class="kpi-m-label">VOC (V)</span>
               <div class="kpi-m-val-row">
-                <span class="kpi-m-val" id="val-voc">50.35</span>
+                <span class="kpi-m-val" id="val-voc">--</span>
                 <span class="kpi-m-unit">V</span>
               </div>
             </div>
@@ -153,7 +157,7 @@
             <div class="kpi-mini-card">
               <span class="kpi-m-label">ISC (A)</span>
               <div class="kpi-m-val-row">
-                <span class="kpi-m-val" id="val-isc">13.56</span>
+                <span class="kpi-m-val" id="val-isc">--</span>
                 <span class="kpi-m-unit">A</span>
               </div>
             </div>
@@ -162,7 +166,7 @@
             <div class="kpi-mini-card">
               <span class="kpi-m-label">FILL FACTOR (%)</span>
               <div class="kpi-m-val-row">
-                <span class="kpi-m-val" id="val-ff">79.75</span>
+                <span class="kpi-m-val" id="val-ff">--</span>
                 <span class="kpi-m-unit">%</span>
               </div>
             </div>
@@ -193,14 +197,14 @@
           <div class="hipot-card status-card">
             <span class="hipot-card-label">HI-POT RESULT</span>
             <div class="hipot-card-val-wrap">
-              <span class="hipot-status-badge pass" id="val-hipot-status">PASS</span>
+              <span class="hipot-status-badge no-data" id="val-hipot-status">NO DATA</span>
             </div>
           </div>
 
           <!-- 2. MODULE ID (Module_ID) -->
           <div class="hipot-card">
             <span class="hipot-card-label">MODULE ID</span>
-            <div class="hipot-card-val mono" id="val-hipot-module">USM0112208260078</div>
+            <div class="hipot-card-val mono" id="val-hipot-module">--</div>
           </div>
 
           <!-- 3. TESTED AT (Tested_At) -->

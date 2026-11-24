@@ -425,7 +425,7 @@ function buildPostLamElAxes() {
   if (dom.postlamElAxisX) {
     dom.postlamElAxisX.innerHTML = '';
     const fragX = document.createDocumentFragment();
-    for (let c = 24; c >= 13; c--) {
+    for (let c = 1; c <= 12; c++) {
       const cell = document.createElement('div');
       cell.className = 'postlam-el-axis-cell-x';
       cell.dataset.col = c;
@@ -436,7 +436,7 @@ function buildPostLamElAxes() {
     spacer.className = 'postlam-el-axis-cell-x spacer-x';
     spacer.innerHTML = '&bull;';
     fragX.appendChild(spacer);
-    for (let c = 12; c >= 1; c--) {
+    for (let c = 13; c <= 24; c++) {
       const cell = document.createElement('div');
       cell.className = 'postlam-el-axis-cell-x';
       cell.dataset.col = c;
@@ -462,8 +462,10 @@ function buildPostLamElAxes() {
 
 function applyPostLamElTransform() {
   if (!dom.postlamElImg) return;
-  dom.postlamElImg.style.transformOrigin = `${postLamElZoom.originX}% ${postLamElZoom.originY}%`;
-  dom.postlamElImg.style.transform = postLamElZoom.scale > 1 ? `scale(${postLamElZoom.scale})` : 'scale(1)';
+  const s = postLamElZoom.scale > 1 ? postLamElZoom.scale : 1;
+  const mirroredOriginX = (100 * s + (1 - s) * postLamElZoom.originX) / (1 + s);
+  dom.postlamElImg.style.transformOrigin = `${mirroredOriginX}% ${postLamElZoom.originY}%`;
+  dom.postlamElImg.style.transform = `scale(-${s}, ${s})`;
   if (dom.postlamElViewport) {
     dom.postlamElViewport.classList.toggle('is-zoomed', postLamElZoom.scale > 1);
   }
@@ -511,7 +513,7 @@ function initPostLamElViewer() {
     if (rect.width > 0 && rect.height > 0) {
       const u = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
       const v = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
-      const col = Math.min(24, Math.max(1, 24 - Math.floor(u * 24)));
+      const col = Math.min(24, Math.max(1, Math.floor(u * 24) + 1));
       const row = GRID_ROWS[Math.min(5, Math.max(0, Math.floor(v * 6)))];
       if (dom.postlamElAxisX) {
         dom.postlamElAxisX.querySelectorAll('.postlam-el-axis-cell-x[data-col]').forEach((c) => {
@@ -631,7 +633,7 @@ function renderPostLamElBadges(elData) {
       dom.postlamElFolderBadge.textContent = 'NG';
       dom.postlamElFolderBadge.className = 'el-folder-badge ng';
     } else {
-      dom.postlamElFolderBadge.textContent = '--';
+      dom.postlamElFolderBadge.textContent = state.moduleId ? 'NO DATA' : '--';
       dom.postlamElFolderBadge.className = 'el-folder-badge';
     }
   }
@@ -1528,47 +1530,22 @@ function updateSummaryAndHistory() {
 }
 
 /**
- * Recompute Allowed Grades based on logged defects
+ * Recompute Allowed Grades — all grades (A, B, R, X) remain selectable regardless of defects
  */
 function recomputeAllowedGrades() {
-  let allowed = ['A', 'B', 'R', 'X'];
-
-  state.defects.forEach(defect => {
-    const defectAllowed = defect.allowedGrades || ['A', 'B', 'R', 'X'];
-    allowed = allowed.filter(g => defectAllowed.includes(g));
-  });
-
-  if (!allowed.includes('X')) allowed.push('X'); // Reject always permitted
+  const allowed = ['A', 'B', 'R', 'X'];
   state.allowedGrades = allowed;
 
   dom.gradeButtons.forEach(btn => {
-    const g = btn.dataset.grade;
-    const isAllowed = allowed.includes(g);
-    btn.classList.toggle('disabled', !isAllowed);
-    btn.setAttribute('aria-disabled', !isAllowed);
+    btn.classList.remove('disabled');
+    btn.setAttribute('aria-disabled', 'false');
   });
-
-  // If currently selected grade violates restrictions, deselect
-  if (state.grade && !allowed.includes(state.grade)) {
-    state.grade = null;
-    dom.gradeButtons.forEach(b => b.classList.remove('selected'));
-    if (dom.summaryGradeBadge) {
-      dom.summaryGradeBadge.textContent = 'Pending Selection';
-      dom.summaryGradeBadge.className = 'strip-grade-preview';
-    }
-  }
 }
 
 /**
  * Grade Selection
  */
 function setGrade(gradeLetter) {
-  if (!state.allowedGrades.includes(gradeLetter)) {
-    showToast(`Grade [${gradeLetter}] not permitted by logged defects`, 'error');
-    soundFx.beep(300, 0.1);
-    return;
-  }
-
   state.grade = gradeLetter;
   state.moduleReadyForImmediateLoad = false;
   dom.gradeButtons.forEach(btn => {
@@ -1623,12 +1600,6 @@ function submitGrade() {
 
   if (!state.grade) {
     showToast('Please select a grade [A, B, R, or X] before submitting', 'error');
-    soundFx.beep(300, 0.1);
-    return;
-  }
-
-  if (!state.allowedGrades.includes(state.grade)) {
-    showToast(`Grade [${state.grade}] is not allowed due to logged defects`, 'error');
     soundFx.beep(300, 0.1);
     return;
   }

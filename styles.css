@@ -2321,6 +2321,7 @@ body.station-postlam .back-card {
   object-fit: contain;
   display: block;
   transform-origin: 50% 50%;
+  transform: scaleX(-1);
   transition: transform 0.05s linear;
   user-select: none;
   -webkit-user-drag: none;

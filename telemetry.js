@@ -87,6 +87,8 @@
       // SunSim Elements (dbo.IV_Flasher)
       pmaxCanvas: document.getElementById('pmax-canvas'),
       canvasContainer: document.getElementById('canvas-container'),
+      sunsimNoDataOverlay: document.getElementById('sunsim-no-data-overlay'),
+      sunsimNoDataSubtitle: document.getElementById('sunsim-no-data-subtitle'),
       canvasReadout: document.getElementById('canvas-readout'),
       valSunsimTime: document.getElementById('val-sunsim-time'),
       legendPmaxVal: document.getElementById('legend-pmax-val'),
@@ -185,11 +187,13 @@
       });
   }
 
-  // Hover-centered scroll-wheel zoom controller for EL image inspection
+  // Hover-centered scroll-wheel zoom controller for mirrored EL image inspection
   function applyElZoom() {
     if (!dom.elSingleImg) return;
-    dom.elSingleImg.style.transformOrigin = `${state.elZoomOriginX}% ${state.elZoomOriginY}%`;
-    dom.elSingleImg.style.transform = state.elZoomScale > 1 ? `scale(${state.elZoomScale})` : 'scale(1)';
+    const s = state.elZoomScale > 1 ? state.elZoomScale : 1;
+    const mirroredOriginX = (100 * s + (1 - s) * state.elZoomOriginX) / (1 + s);
+    dom.elSingleImg.style.transformOrigin = `${mirroredOriginX}% ${state.elZoomOriginY}%`;
+    dom.elSingleImg.style.transform = `scale(-${s}, ${s})`;
 
     if (dom.elSingleViewport) {
       dom.elSingleViewport.classList.toggle('is-zoomed', state.elZoomScale > 1);
@@ -230,7 +234,7 @@
     if (dom.elAxisX) {
       dom.elAxisX.innerHTML = '';
       const fragX = document.createDocumentFragment();
-      for (let c = 24; c >= 13; c--) {
+      for (let c = 1; c <= 12; c++) {
         const cell = document.createElement('div');
         cell.className = 'el-axis-cell-x';
         cell.dataset.col = c;
@@ -241,7 +245,7 @@
       spacer.className = 'el-axis-cell-x spacer-x';
       spacer.innerHTML = '&bull;';
       fragX.appendChild(spacer);
-      for (let c = 12; c >= 1; c--) {
+      for (let c = 13; c <= 24; c++) {
         const cell = document.createElement('div');
         cell.className = 'el-axis-cell-x';
         cell.dataset.col = c;
@@ -278,7 +282,7 @@
       if (rect.width > 0 && rect.height > 0) {
         const u = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
         const v = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
-        const col = Math.min(24, Math.max(1, 24 - Math.floor(u * 24)));
+        const col = Math.min(24, Math.max(1, Math.floor(u * 24) + 1));
         const row = EL_GRID_ROWS[Math.min(5, Math.max(0, Math.floor(v * 6)))];
 
         if (dom.elAxisX) {
@@ -489,6 +493,9 @@
   }
 
   function drawPmaxGraph() {
+    if (!state.sunsimData || state.sunsimData.found !== true || state.sunsimData.pmpp === null || state.sunsimData.pmpp === undefined) {
+      return;
+    }
     const canvas = dom.pmaxCanvas;
     if (!canvas || !dom.canvasContainer) return;
 
@@ -753,14 +760,39 @@
   // 3. Render SunSim Metrology KPIs (6 Database Columns from dbo.IV_Flasher)
   // =========================================================================
   function renderSunSimMetrics(sunsim) {
-    if (!sunsim) return;
+    const hasData = Boolean(sunsim && sunsim.found === true && sunsim.pmpp !== null && sunsim.pmpp !== undefined);
 
-    const pmax = Number(getSunsimParam('pmax', 544.6)).toFixed(1);
-    const voc = Number(getSunsimParam('voc', 50.35)).toFixed(2);
-    const isc = Number(getSunsimParam('isc', 13.56)).toFixed(2);
-    const vmp = Number(getSunsimParam('vmp', 42.28)).toFixed(2);
-    const imp = Number(getSunsimParam('imp', 12.88)).toFixed(2);
-    const ff = Number(getSunsimParam('ff', 79.75)).toFixed(2);
+    if (!hasData) {
+      state.sunsimData = null;
+      state.canvasMetrics = null;
+      hideHoverReadout();
+      if (dom.pmaxCanvas) dom.pmaxCanvas.style.display = 'none';
+      if (dom.sunsimNoDataSubtitle) {
+        dom.sunsimNoDataSubtitle.textContent = state.moduleId
+          ? `No IV_Flasher data in database for ${state.moduleId}`
+          : 'Waiting for module serial...';
+      }
+      if (dom.sunsimNoDataOverlay) dom.sunsimNoDataOverlay.style.display = 'flex';
+      if (dom.valPmax) dom.valPmax.textContent = '--';
+      if (dom.legendPmaxVal) dom.legendPmaxVal.textContent = '--';
+      if (dom.valVoc) dom.valVoc.textContent = '--';
+      if (dom.valIsc) dom.valIsc.textContent = '--';
+      if (dom.valVmp) dom.valVmp.textContent = '--';
+      if (dom.valImp) dom.valImp.textContent = '--';
+      if (dom.valFF) dom.valFF.textContent = '--';
+      if (dom.valSunsimTime) dom.valSunsimTime.textContent = state.moduleId ? 'NO DATA' : '--';
+      return;
+    }
+
+    if (dom.sunsimNoDataOverlay) dom.sunsimNoDataOverlay.style.display = 'none';
+    if (dom.pmaxCanvas) dom.pmaxCanvas.style.display = 'block';
+
+    const pmax = Number(getSunsimParam('pmax', 0)).toFixed(1);
+    const voc = Number(getSunsimParam('voc', 0)).toFixed(2);
+    const isc = Number(getSunsimParam('isc', 0)).toFixed(2);
+    const vmp = Number(getSunsimParam('vmp', 0)).toFixed(2);
+    const imp = Number(getSunsimParam('imp', 0)).toFixed(2);
+    const ff = Number(getSunsimParam('ff', 0)).toFixed(2);
     const testedAt = String(getSunsimParam('tested_at', '--'));
 
     if (dom.valPmax) dom.valPmax.textContent = pmax;
@@ -779,7 +811,26 @@
   // 4. Render Hi-Pot Safety Results (Real Columns from dbo.Hipot)
   // =========================================================================
   function renderHiPotMetrics(hipot) {
-    if (!hipot) return;
+    const hasData = Boolean(hipot && hipot.found === true);
+
+    if (!hasData) {
+      state.hipotData = null;
+      if (dom.valHipotModule) {
+        dom.valHipotModule.textContent = state.moduleId || '--';
+      }
+      if (dom.valHipotTime) {
+        dom.valHipotTime.textContent = state.moduleId ? 'No record in dbo.Hipot' : '--';
+      }
+      if (dom.valHipotStatus) {
+        dom.valHipotStatus.textContent = 'NO HI-POT DATA';
+        dom.valHipotStatus.className = 'hipot-status-badge no-data';
+      }
+      if (dom.valHipotFile) {
+        dom.valHipotFile.textContent = state.moduleId ? 'NO DATA' : '--';
+        dom.valHipotFile.title = '';
+      }
+      return;
+    }
 
     // 1. Module ID
     const modId = hipot.module_id || hipot.Module_ID || state.moduleId || '--';
@@ -843,9 +894,9 @@
       dom.valElFolderStatus.className = 'el-folder-badge ng';
       dom.valElFolderStatus.title = 'EL Image Folder: NG';
     } else {
-      dom.valElFolderStatus.textContent = '--';
+      dom.valElFolderStatus.textContent = state.moduleId ? 'NO DATA' : '--';
       dom.valElFolderStatus.className = 'el-folder-badge';
-      dom.valElFolderStatus.title = 'EL Image Folder Status (OK / NG)';
+      dom.valElFolderStatus.title = state.moduleId ? 'No EL folder status found in database' : 'EL Image Folder Status (OK / NG)';
     }
   }
 
@@ -898,11 +949,15 @@
         if (sunsim) {
           state.sunsimData = sunsim;
           renderSunSimMetrics(sunsim);
+        } else {
+          renderSunSimMetrics(null);
         }
         const hipot = data.hipot;
         if (hipot) {
           state.hipotData = hipot;
           renderHiPotMetrics(hipot);
+        } else {
+          renderHiPotMetrics(null);
         }
         return;
       }
@@ -914,9 +969,13 @@
     fetch(`${elEndpoint}?module_id=${encodeURIComponent(cleanMod)}`)
       .then(r => r.ok ? r.json() : null)
       .then(elData => {
-        if (state.moduleId === cleanMod && elData) renderElFolderStatus(elData.folder_status, elData.image_path);
+        if (state.moduleId === cleanMod) {
+          renderElFolderStatus(elData && elData.folder_status, elData && elData.image_path);
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (state.moduleId === cleanMod) renderElFolderStatus('', '');
+      });
 
     // 2. Try `/api/telemetry/all?module_id=...`
     try {
@@ -925,14 +984,10 @@
         const data = await resAll.json();
         const sunsim = data.sunsim || data.sun_simulator;
         const hipot = data.hipot;
-        if (sunsim) {
-          state.sunsimData = sunsim;
-          renderSunSimMetrics(sunsim);
-        }
-        if (hipot) {
-          state.hipotData = hipot;
-          renderHiPotMetrics(hipot);
-        }
+        state.sunsimData = sunsim || null;
+        renderSunSimMetrics(sunsim || null);
+        state.hipotData = hipot || null;
+        renderHiPotMetrics(hipot || null);
         return;
       }
     } catch (e) {
@@ -950,14 +1005,20 @@
         const sunsim = await sunsimRes.json();
         state.sunsimData = sunsim;
         renderSunSimMetrics(sunsim);
+      } else {
+        renderSunSimMetrics(null);
       }
       if (hipotRes.ok) {
         const hipot = await hipotRes.json();
         state.hipotData = hipot;
         renderHiPotMetrics(hipot);
+      } else {
+        renderHiPotMetrics(null);
       }
     } catch (err) {
       console.error('[Telemetry] Fallback telemetry fetch error:', err);
+      renderSunSimMetrics(null);
+      renderHiPotMetrics(null);
     }
   }
 
@@ -1132,8 +1193,10 @@
       }
     } catch (e) { }
 
-    // Fallback: render baseline sample image immediately (never leave pitch black)
+    // Initial idle state: show explicit Waiting / No Data placeholders
     updateSingleElImage(null);
+    renderSunSimMetrics(null);
+    renderHiPotMetrics(null);
   }
 
   if (document.readyState === 'loading') {
