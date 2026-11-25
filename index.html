@@ -45,6 +45,13 @@
           </svg>
           <input type="text" id="module-id-input" value="" maxlength="16" spellcheck="false" autocomplete="off"
             placeholder="e.g. USM0112208260078">
+          <button type="button" class="btn-camera-scan" id="btn-camera-scan"
+            title="Scan module barcode with tablet/device camera" aria-label="Scan barcode with camera">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15">
+              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+              <circle cx="12" cy="13" r="4"></circle>
+            </svg>
+          </button>
         </div>
 
         <!-- Operator CMMS Profile Badge Button -->
@@ -89,8 +96,19 @@
         <div class="grade-restrictions-hint" id="grade-restrictions-hint" style="display: none;"></div>
       </div>
 
-      <!-- Right: Full Grade History Page & Submit Grade -->
+      <!-- Right: Fullscreen, Full Grade History Page & Submit Grade -->
       <div class="header-segment action-segment">
+        <button type="button" id="btn-fullscreen" class="console-btn secondary"
+          aria-pressed="false" title="Toggle Fullscreen Mode">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="15 3 21 3 21 9"></polyline>
+            <polyline points="9 21 3 21 3 15"></polyline>
+            <line x1="21" y1="3" x2="14" y2="10"></line>
+            <line x1="3" y1="21" x2="10" y2="14"></line>
+          </svg>
+          <span id="btn-fullscreen-label">Fullscreen</span>
+        </button>
+
         <a href="/database.html" target="_blank" id="btn-view-database" class="console-btn secondary"
           title="Open Full Grading History Page in a New Tab">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -622,6 +640,32 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="console-btn secondary" id="btn-copy-sql">Copy</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Camera Barcode Scanner Modal -->
+    <div class="modal-backdrop" id="camera-scanner-modal" role="dialog" aria-modal="true" aria-labelledby="camera-scan-title">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <span class="modal-cell-badge badge-mqtt">CAMERA SCAN</span>
+            <h3 id="camera-scan-title">Scan Module Barcode</h3>
+          </div>
+          <button type="button" class="btn-close-modal" id="btn-close-camera-modal"
+            aria-label="Close Camera Scanner">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="camera-scan-viewport">
+            <video id="camera-scan-video" autoplay playsinline muted></video>
+            <div class="camera-scan-reticle" aria-hidden="true">
+              <div class="camera-scan-line"></div>
+            </div>
+          </div>
+          <p class="camera-scan-status" id="camera-scan-status">Starting camera...</p>
+          <div class="camera-scan-actions">
+            <button type="button" class="console-btn secondary" id="btn-cancel-camera-scan">Cancel</button>
+          </div>
         </div>
       </div>
     </div>

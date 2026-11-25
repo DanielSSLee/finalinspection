@@ -140,7 +140,9 @@ const DEFECT_CATALOG = {
   'O1': { code: 'O1', name: 'No EL data', category: 'Other', side: 'front', rawGrades: 'RT', allowedGrades: ['R', 'X'] },
   'O2': { code: 'O2', name: 'No Power Output', category: 'Other', side: 'front', rawGrades: 'RT', allowedGrades: ['R', 'X'] },
   'O3': { code: 'O3', name: 'Low Power Deviation', category: 'Other', side: 'front', rawGrades: 'RW, RT', allowedGrades: ['R', 'X'] },
-  'O4': { code: 'O4', name: 'High Power Deviation', category: 'Other', side: 'front', rawGrades: 'RT', allowedGrades: ['R', 'X'] }
+  'O4': { code: 'O4', name: 'High Power Deviation', category: 'Other', side: 'front', rawGrades: 'RT', allowedGrades: ['R', 'X'] },
+  'O5': { code: 'O5', name: 'No SunSim Data', category: 'Other', side: 'front', rawGrades: 'RT', allowedGrades: ['R', 'X'] },
+  'O6': { code: 'O6', name: 'No Hi-Pot Data', category: 'Other', side: 'front', rawGrades: 'RT', allowedGrades: ['R', 'X'] }
 };
 
 // Application State
@@ -207,6 +209,14 @@ const soundFx = {
 const dom = {
   scannerField: document.getElementById('scanner-field'),
   moduleIdInput: document.getElementById('module-id-input'),
+  btnCameraScan: document.getElementById('btn-camera-scan'),
+  btnFullscreen: document.getElementById('btn-fullscreen'),
+  btnFullscreenLabel: document.getElementById('btn-fullscreen-label'),
+  cameraScannerModal: document.getElementById('camera-scanner-modal'),
+  cameraScanVideo: document.getElementById('camera-scan-video'),
+  cameraScanStatus: document.getElementById('camera-scan-status'),
+  btnCloseCameraModal: document.getElementById('btn-close-camera-modal'),
+  btnCancelCameraScan: document.getElementById('btn-cancel-camera-scan'),
   operatorInput: document.getElementById('operator-input'),
   btnOperatorProfile: document.getElementById('btn-operator-profile'),
   displayOperatorName: document.getElementById('display-operator-name'),
@@ -2209,6 +2219,155 @@ function attachEventListeners() {
       fetchGradingHistory();
       showToast('Refreshed grading history', 'info');
       soundFx.beep(600, 0.04);
+    });
+  }
+
+  // Fullscreen Toggle Button
+  const syncFullscreenButton = () => {
+    const isFs = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+    if (dom.btnFullscreen) {
+      dom.btnFullscreen.setAttribute('aria-pressed', isFs ? 'true' : 'false');
+    }
+    if (dom.btnFullscreenLabel) {
+      dom.btnFullscreenLabel.textContent = isFs ? 'Exit Full' : 'Fullscreen';
+    }
+  };
+  if (dom.btnFullscreen) {
+    dom.btnFullscreen.addEventListener('click', async () => {
+      const isFs = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+      try {
+        if (!isFs) {
+          const el = document.documentElement;
+          if (el.requestFullscreen) await el.requestFullscreen();
+          else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+        } else {
+          if (document.exitFullscreen) await document.exitFullscreen();
+          else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+        }
+      } catch (e) {
+        showToast('Fullscreen not supported by this browser', 'warning');
+      }
+      syncFullscreenButton();
+    });
+    document.addEventListener('fullscreenchange', syncFullscreenButton);
+    document.addEventListener('webkitfullscreenchange', syncFullscreenButton);
+  }
+
+  // Camera Barcode Scanner
+  let cameraStream = null;
+  let cameraScanTimer = null;
+
+  const closeCameraScanner = () => {
+    if (cameraScanTimer) {
+      clearTimeout(cameraScanTimer);
+      cameraScanTimer = null;
+    }
+    if (cameraStream) {
+      cameraStream.getTracks().forEach((t) => {
+        try { t.stop(); } catch (e) { }
+      });
+      cameraStream = null;
+    }
+    if (dom.cameraScanVideo) {
+      dom.cameraScanVideo.srcObject = null;
+    }
+    if (dom.cameraScannerModal) {
+      dom.cameraScannerModal.classList.remove('open');
+    }
+  };
+
+  const openCameraScanner = async () => {
+    if (!dom.cameraScannerModal || !dom.cameraScanVideo) return;
+    dom.cameraScannerModal.classList.add('open');
+    if (dom.cameraScanStatus) {
+      dom.cameraScanStatus.textContent = 'Starting rear camera...';
+    }
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      if (dom.cameraScanStatus) {
+        dom.cameraScanStatus.textContent = 'Camera requires HTTPS (use the Cloudflare tunnel URL or localhost).';
+      }
+      return;
+    }
+
+    if (typeof window.BarcodeDetector === 'undefined') {
+      if (dom.cameraScanStatus) {
+        dom.cameraScanStatus.textContent = 'Camera barcode detection requires Chrome/Edge on Android.';
+      }
+      return;
+    }
+
+    let detector = null;
+    try {
+      detector = new window.BarcodeDetector({
+        formats: ['code_128', 'code_39', 'qr_code', 'data_matrix', 'ean_13', 'itf']
+      });
+    } catch (e) {
+      detector = new window.BarcodeDetector();
+    }
+
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      });
+      dom.cameraScanVideo.srcObject = cameraStream;
+      await dom.cameraScanVideo.play();
+      if (dom.cameraScanStatus) {
+        dom.cameraScanStatus.textContent = 'Point camera at module barcode (USM...)';
+      }
+
+      const scanFrame = async () => {
+        if (!cameraStream || !dom.cameraScannerModal.classList.contains('open')) return;
+        try {
+          if (dom.cameraScanVideo.readyState >= 2) {
+            const barcodes = await detector.detect(dom.cameraScanVideo);
+            for (const b of barcodes) {
+              const raw = String(b.rawValue || '').trim().toUpperCase();
+              const match = raw.match(/USM[A-Z0-9]{13}/);
+              const candidate = match ? match[0] : (raw.length === 16 && raw.startsWith('USM') ? raw : '');
+              if (candidate) {
+                closeCameraScanner();
+                if (dom.moduleIdInput) dom.moduleIdInput.value = candidate;
+                if (candidate !== state.moduleId) {
+                  loadModule(candidate, 'MANUAL', false);
+                }
+                showToast(`Scanned module: ${candidate}`, 'success');
+                soundFx.beep(950, 0.08);
+                return;
+              }
+            }
+          }
+        } catch (e) { }
+        cameraScanTimer = setTimeout(scanFrame, 120);
+      };
+      cameraScanTimer = setTimeout(scanFrame, 150);
+    } catch (err) {
+      if (dom.cameraScanStatus) {
+        const isSec = err && (err.name === 'SecurityError' || err.name === 'NotAllowedError');
+        dom.cameraScanStatus.textContent = isSec
+          ? 'Camera blocked or requires HTTPS. Allow camera permission or open via HTTPS.'
+          : `Camera error: ${(err && err.message) || 'Unavailable'}`;
+      }
+    }
+  };
+
+  if (dom.btnCameraScan) {
+    dom.btnCameraScan.addEventListener('click', openCameraScanner);
+  }
+  if (dom.btnCloseCameraModal) {
+    dom.btnCloseCameraModal.addEventListener('click', closeCameraScanner);
+  }
+  if (dom.btnCancelCameraScan) {
+    dom.btnCancelCameraScan.addEventListener('click', closeCameraScanner);
+  }
+  if (dom.cameraScannerModal) {
+    dom.cameraScannerModal.addEventListener('click', (e) => {
+      if (e.target === dom.cameraScannerModal) closeCameraScanner();
     });
   }
 
